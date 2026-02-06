@@ -7,16 +7,9 @@ import optax
 import tqdm
 
 
-def create_opt(
-    model: nnx.Module,
-    lr: 1e-3,
-    should_clip: bool = False,
-):
-
+def create_opt(model: nnx.Module, lr: 1e-3, should_clip: bool = False):
     clip_default = optax.clip_by_global_norm(1.0) if should_clip else optax.identity()
-
     tx = optax.chain(clip_default, optax.contrib.muon(learning_rate=lr))
-
     return nnx.Optimizer(model, tx=tx, wrt=nnx.Param)
 
 
@@ -26,54 +19,50 @@ def make_indices(size: int, batch_size: int, key: jax.Array):
     key, subkey = jax.random.split(key, 2)
     all_samples_shuffled = jax.random.permutation(subkey, all_samples)
     n_batches = size // batch_size
-    all_samples_shuffled = all_samples_shuffled[n_batches * batch_size]
-    return n_batches, all_samples_shuffled.view(n_batches, batch_size), key
+    all_samples_shuffled = all_samples_shuffled[: n_batches * batch_size]
+    return all_samples_shuffled.reshape((n_batches, batch_size)), key
 
 
 def update(
-    carry: tuple[nnx.Module, jax.Array],
+    carry: tuple[nnx.Module, nnx.Optimizer, jax.Array],
     indices: jax.Array,
     X: jax.Array,
     y: jax.Array,
     loss_fn: callable,
-    opt: nnx.Optimizer,
 ):
-    model, curr_loss = carry
+    model, opt, curr_loss = carry
 
-    def loss_fn(model: nnx.Module):
-        y_pred = model(X[indices])
-        loss = loss_fn(y_pred, y[indices])
-        return loss
+    def step(model):
+        X_batch = jnp.take(X, indices, axis=0)
+        y_batch = jnp.take(y, indices, axis=0)
+        y_pred = model(X_batch)
+        return loss_fn(y_pred, y_batch)
 
-    loss, grads = nnx.value_and_grad(loss_fn, argnums=0)
+    loss, grads = nnx.value_and_grad(step, argnums=0)(model)
     opt.update(model, grads)
 
-    return (model, curr_loss + loss), None
+    return (model, opt, curr_loss + loss), None
 
 
-@jax.jit
+@partial(nnx.jit, static_argnames=("loss_fn",))
 def train_step(
     model: nnx.Module,
     X: jax.Array,
     y: jax.Array,
+    indices: jax.Array,
     loss_fn: callable,
-    batch_size: int,
     key: jax.Array,
     opt: nnx.Optimizer,
 ):
-    size = X.shape[0]
-    # Get the data indices
-    n_batches, indices, key = make_indices(size, batch_size, key)
-
     # Evaluate the model
-    (model, loss), _ = jax.lax.scan(
-        f=partial(update, X=X, y=y, loss_fn=loss_fn, opt=opt),
+    (model, opt, loss), _ = jax.lax.scan(
+        f=partial(update, X=X, y=y, loss_fn=loss_fn),
         xs=indices,
-        init=(model, jnp.array(0.0)),
-        length=n_batches,
+        init=(model, opt, jnp.array(0.0)),
+        length=len(indices),
     )
 
-    return model, loss / size, key
+    return model, loss / len(indices), key
 
 
 def train(
@@ -89,10 +78,13 @@ def train(
 ):
     opt = create_opt(model, lr=lr, should_clip=should_clip)
 
+    # Get the data indices
+    indices, key = make_indices(X.shape[0], batch_size, key)
+
     losses = []
     for _ in (pbar := tqdm.trange(epochs)):
-        model, loss, key = train_step(model, X, y, loss_fn, batch_size, key, opt)
+        model, loss, key = train_step(model, X, y, indices, loss_fn, key, opt)
         pbar.set_postfix(loss=loss)
         losses.append(loss)
 
-    return model, losses
+    return model, losses, key
