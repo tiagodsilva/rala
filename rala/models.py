@@ -45,18 +45,3 @@ class Linear(nnx.Module):
 
     def __call__(self, x: jax.Array):
         return self.linear(x)
-
-
-if __name__ == "__main__":
-    # Create and MLP with more than one layer
-    rngs = nnx.Rngs(42)
-    model = MLP(din=10, dmid=32, dout=1, nlayers=2, rngs=rngs)
-    x = jax.numpy.ones((10,))
-    y = model(x)
-    assert y.shape == (1,)
-
-    # Create an MLP with less than one layer
-    model = MLP(din=10, dmid=32, dout=1, nlayers=0, rngs=rngs)
-    x = jax.numpy.ones((10,))
-    y = model(x)
-    assert y.shape == (1,)

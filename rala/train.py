@@ -7,9 +7,23 @@ import optax
 import tqdm
 
 
+def split(X: jax.Array, *ys: jax.Array, p: float = 0.7, key: jax.Array):
+    size = len(X)
+    indices = jnp.arange(size)
+    indices_shuffled = jax.random.permutation(key, indices)
+
+    size_train = int(p * size)
+    indices_left = indices_shuffled[:size_train]
+    indices_right = indices_shuffled[size_train:]
+
+    split_train = [X[indices_left]] + [y[indices_left] for y in ys]
+    split_test = [X[indices_right]] + [y[indices_right] for y in ys]
+    return split_train + split_test
+
+
 def create_opt(model: nnx.Module, lr: 1e-3, should_clip: bool = False):
     clip_default = optax.clip_by_global_norm(1.0) if should_clip else optax.identity()
-    tx = optax.chain(clip_default, optax.contrib.muon(learning_rate=lr))
+    tx = optax.chain(clip_default, optax.contrib.muon(learning_rate=lr, weight_decay=1e-4))
     return nnx.Optimizer(model, tx=tx, wrt=nnx.Param)
 
 

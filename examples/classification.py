@@ -5,8 +5,8 @@ import optax
 import typer
 from sklearn.datasets import make_classification
 
-from rala.models import MLP
-from rala.train import train
+from rala.models import MLP, Linear
+from rala.train import split, train
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -26,22 +26,24 @@ def acc(model: MLP, X: jax.Array, y: jax.Array):
 
 @app.command()
 def main(
-    size: int = 500,
+    size: int = 1000,
     feat: int = 20,
     classes: int = 2,
     dmid: int = 64,
-    epochs: int = 200,
+    epochs: int = 50,
     batch_size: int = 64,
     seed: int = 42,
 ):
     X, y = make_classification(n_samples=size, n_features=feat, n_classes=classes, random_state=seed)
 
     rngs = nnx.Rngs(seed)
+    X_train, y_train, X_test, y_test = split(X, y, key=rngs())
+
     model = MLP(feat, dmid, classes, rngs=rngs)
-    model, _, _ = train(model, epochs, X, y, loss_fn, batch_size, rngs())
+    model, _, _ = train(model, epochs, X_train, y_train, loss_fn, batch_size, rngs())
 
     # Compute accuracy on the training set
-    jax.debug.print("{}", acc(model, X, y))
+    jax.debug.print("{}", acc(model, X_test, y_test))
 
     return model
 
