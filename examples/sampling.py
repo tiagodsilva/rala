@@ -18,11 +18,8 @@ def banana_log_density(x, b: float = 4):
 
 def squiggle_log_density(x, a: float = 1.5, cov: jax.Array = jnp.array([[5, 0], [0, 0.05]])):
     y = jnp.array([x[0], x[1] + jnp.sin(a * x[0])])
-    return jsp.stats.multivariate_normal.logpdf(
-        y,
-        mean=jnp.zeros_like(y),
-        cov=cov,
-    )
+    y_inv = jnp.linalg.solve(cov, y)
+    return jnp.dot(y, y_inv) / 2
 
 
 class DistType(Enum):
