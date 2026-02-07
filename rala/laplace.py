@@ -40,7 +40,7 @@ def laplace_approximation(
     model: nnx.Module,
     key: jax.Array,
     num_samples: int,
-):
+) -> tuple[nnx.State, nnx.GraphDef, jax.Array]:
     state = nnx.state(model)
     graphdef = nnx.graphdef(model)
     theta, unravel = ravel_pytree(state)

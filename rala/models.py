@@ -1,5 +1,6 @@
 import flax.nnx as nnx
 import jax
+import jax.numpy as jnp
 
 
 def forward(x: jax.Array, layer: nnx.Module):
@@ -35,3 +36,16 @@ class MLP(nnx.Module):
         )
         y = self.linear_out(y)
         return y
+
+
+# General model for a log posterior distribution.
+# Created for compatibility with MLP, nnx.Linear, etc., i.e., other nnx modules.
+# logp_fn takes an input and returns a scalar log probability.
+class LogPosterior(nnx.Module):
+    def __init__(self, theta: jax.Array, logp_fn: callable):
+        self.dim = theta.shape[0]
+        self.theta = nnx.Param(theta)
+        self.logp = logp_fn
+
+    def __call__(self):
+        return self.logp(self.theta)

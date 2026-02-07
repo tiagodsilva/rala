@@ -32,11 +32,11 @@ def plot_potential(
     ymin: float,
     ymax: float,
     res: float,
-    potential: callable,
+    logp_fn: callable,
     ax: plt.Axes,
     alpha: float = 1.0,
 ):
-    pot_vmap = jax.vmap(jax.vmap(potential, 1, 0), 1, 0)
+    pot_vmap = jax.vmap(jax.vmap(logp_fn, 1, 0), 1, 0)
 
     x = jnp.linspace(xmin, xmax, endpoint=True, num=res)
     y = jnp.linspace(ymin, ymax, endpoint=True, num=res)
@@ -44,7 +44,7 @@ def plot_potential(
     xy = jnp.meshgrid(x, y)
     xy = jnp.stack(xy)
 
-    log_p = -pot_vmap(xy)
+    log_p = pot_vmap(xy)
 
     # As we simply want the shape, we normalize log_p
     log_p = log_p - jax.nn.logsumexp(log_p, axis=(0, 1))
