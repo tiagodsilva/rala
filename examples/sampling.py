@@ -1,9 +1,7 @@
 from enum import Enum
 
-import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
-import jax.scipy as jsp
 import jax.scipy.optimize as jspo
 import matplotlib.pyplot as plt
 import typer
@@ -51,7 +49,7 @@ class DistType(Enum):
             return squiggle_log_density, 2
 
 
-app = typer.Typer()
+app = typer.Typer(pretty_exceptions_enable=False)
 
 
 @app.command()
@@ -81,8 +79,6 @@ def main(dist: DistType, epochs: int = 50, seed: int = 42, num_samples: int = 10
     samples = samples["theta"].get_value()
 
     plot_samples(samples, x_map, logp_fn)
-
-    return
 
 
 if __name__ == "__main__":

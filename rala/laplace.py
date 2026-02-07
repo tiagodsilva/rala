@@ -1,3 +1,4 @@
+from enum import Enum
 from functools import partial
 from typing import Callable
 
@@ -7,16 +8,21 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import jax.tree_util as tree_util
+from diffrax import Dopri5, ODETerm, diffeqsolve
 from jax.flatten_util import ravel_pytree
 
 
-@partial(jax.jit, static_argnames=("unravel",))
-@partial(jax.vmap, in_axes=(0, None, None, None), out_axes=0)
+class LaplaceMethod:
+    STANDARD = "standard"
+    RIEMANN = "riemann"
+
+
+@jax.jit
+@partial(jax.vmap, in_axes=(0, None, None), out_axes=0)
 def tree_multivariate_normal(
     key: jax.Array,
     mean_tree: struct.PyTreeNode,
     cov_L_tree: struct.PyTreeNode,
-    unravel: callable,
 ):
     def sample_leaf(key: jax.Array, mean: jax.Array, cov_L: jax.Array):
         z = jax.random.normal(key, mean.shape)
@@ -32,14 +38,37 @@ def tree_multivariate_normal(
     key_tree = tree_util.tree_unflatten(treedef, keys)
 
     theta = sample_leaf(key_tree, mean_tree, cov_L_tree)
-    return unravel(theta)
+    return theta
+
+
+@partial(jax.jit, static_argnames=("hvp_fn", "dim", "dt"))
+@partial(jax.vmap, in_axes=(0, None, None, None), out_axes=0)
+def expmap(c_i: jax.Array, hvp_fn: callable, dim: int, dt: float = 0.1):
+    # Integrate from c_i to c_e
+    def f(t, c_c_prime, _):
+        c = c_c_prime[:dim]
+        c_prime = c_c_prime[dim:]
+
+        grad_c, hvp_c = hvp_fn(c, c_prime)
+
+        rhs_c_prime = c
+        rhs_c = grad_c * jnp.dot(c_prime, hvp_c) / (1 + jnp.sum(grad_c**2))
+
+        return jnp.hstack([rhs_c_prime, rhs_c])
+
+    term = ODETerm(f)
+    solver = Dopri5()
+    solution = diffeqsolve(term, solver, t0=0, t1=1, dt0=dt, y0=c_i)
+
+    return solution.ys[dim:]
 
 
 def laplace_approximation(
-    log_p: Callable[[nnx.Module], float],
+    logp_fn: Callable[[nnx.Module], float],
     model: nnx.Module,
     key: jax.Array,
     num_samples: int,
+    method: LaplaceMethod = LaplaceMethod.STANDARD,
 ) -> tuple[nnx.State, nnx.GraphDef, jax.Array]:
     state = nnx.state(model)
     graphdef = nnx.graphdef(model)
@@ -49,12 +78,28 @@ def laplace_approximation(
     def log_p_flat(theta):
         state_unflat = unravel(theta)
         model_reconstructed = nnx.merge(graphdef, state_unflat)
-        return log_p(model_reconstructed)
+        return logp_fn(model_reconstructed)
 
     hessian = -jax.hessian(log_p_flat)(theta)
     hessian_L = jnp.linalg.cholesky(hessian)
+    dim, _ = hessian.shape
 
     key, *keys = jax.random.split(key, num_samples + 1)
     keys = jnp.array(keys)
 
-    return tree_multivariate_normal(keys, theta, hessian_L, unravel), graphdef, key
+    samples = tree_multivariate_normal(keys, theta, hessian_L)
+
+    match method:
+        case LaplaceMethod.RIEMANN:
+            grad_fn = jax.grad(logp_fn)
+
+            def hvp_fn(theta, v):
+                return jax.jvp(grad_fn, (theta,), (v,))
+
+            samples = expmap(method, hvp_fn, dim=dim)
+
+    # Apply jax.vmap to unravel so we can unravel multiple samples at the same time
+    unravel = jax.vmap(unravel)
+    samples = unravel(samples)
+
+    return samples, graphdef, key
