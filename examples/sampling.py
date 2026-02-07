@@ -84,7 +84,7 @@ def main(dist: DistType, epochs: int = 50, seed: int = 42, num_samples: int = 10
     )
     samples = samples["theta"].get_value()
 
-    filepath = pathlib.Path("figures/{dist.name}.png")
+    filepath = pathlib.Path(f"figures/{dist.value}.png")
     filepath.parent.mkdir(exist_ok=True)
     plot_samples(samples, x_map, logp_fn, filepath)
 
