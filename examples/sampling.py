@@ -58,7 +58,13 @@ app = typer.Typer(pretty_exceptions_enable=False)
 
 
 @app.command()
-def main(dist: DistType, epochs: int = 50, seed: int = 42, num_samples: int = 1000):
+def main(
+    dist: DistType,
+    epochs: int = 50,
+    seed: int = 42,
+    num_samples: int = 1000,
+    method: LaplaceMethod = LaplaceMethod.RIEMANN,
+):
     logp_fn, dim = dist.get()
 
     # Find MAP by maximizing the log-likelihood
@@ -80,7 +86,7 @@ def main(dist: DistType, epochs: int = 50, seed: int = 42, num_samples: int = 10
         model,
         key=key,
         num_samples=num_samples,
-        method=LaplaceMethod.RIEMANN,
+        method=method,
     )
     samples = samples["theta"].get_value()
 

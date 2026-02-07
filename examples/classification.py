@@ -9,7 +9,7 @@ import typer
 from flax.nnx.graph import GraphDef
 from sklearn.datasets import make_classification
 
-from rala.laplace import laplace_approximation
+from rala.laplace import LaplaceMethod, laplace_approximation
 from rala.models import MLP
 from rala.train import split, train
 
@@ -60,7 +60,7 @@ def acc_from_pm(pred_m: jax.Array, y: jax.Array):
 
 
 @jax.jit
-def log_p(model: nnx.Module, X: jax.Array, y: jax.Array, sigma_p: float = 1):
+def log_p(model: nnx.Module, X: jax.Array, y: jax.Array, sigma_p: float = 5):
     # We compute the likelihood for data point
     logits = model(X)
     logits = nnx.log_softmax(logits, axis=1)
@@ -98,6 +98,7 @@ def main(
     batch_size: int = 64,
     num_samples: int = 512,
     seed: int = 42,
+    method: LaplaceMethod = LaplaceMethod.STANDARD,
 ):
     X, y = make_classification(n_samples=size, n_features=feat, n_classes=classes, random_state=seed)
 
@@ -120,6 +121,7 @@ def main(
             model.linear_out,
             key1,
             num_samples=num_samples,
+            method=method,
         )
 
         # Compute the accuracy based on the Laplace approximation for the last layer
@@ -130,6 +132,7 @@ def main(
         model,
         key2,
         num_samples=num_samples,
+        method=method,
     )
 
     # Compute accuracy from the predictive marginal
