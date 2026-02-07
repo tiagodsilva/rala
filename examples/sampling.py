@@ -75,7 +75,7 @@ def main(dist: DistType, epochs: int = 50, seed: int = 42, num_samples: int = 10
     key = jax.random.key(seed)
     samples, _, key = laplace_approximation(
         # Here there is no separation between model and data.
-        # Hence the posterior distribution is simply computed by calling `model`.
+        # Hence `LogPosterior` serves solely to encapsulate the parameters.
         lambda model: logp_fn(model.theta),
         model,
         key=key,
