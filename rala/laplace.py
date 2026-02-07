@@ -42,25 +42,25 @@ def tree_multivariate_normal(
 
 
 @partial(jax.jit, static_argnames=("hvp_fn", "dim", "dt"))
-@partial(jax.vmap, in_axes=(0, None, None, None), out_axes=0)
+@partial(jax.vmap, in_axes=(0, None, None), out_axes=0)
 def expmap(c_i: jax.Array, hvp_fn: callable, dim: int, dt: float = 0.1):
     # Integrate from c_i to c_e
-    def f(t, c_c_prime, _):
+    def geodesic_ode(t: float, c_c_prime: jax.Array, args):
+        dim, hvp_fn = args
         c = c_c_prime[:dim]
         c_prime = c_c_prime[dim:]
 
         grad_c, hvp_c = hvp_fn(c, c_prime)
 
-        rhs_c_prime = c
-        rhs_c = grad_c * jnp.dot(c_prime, hvp_c) / (1 + jnp.sum(grad_c**2))
+        rhs_c = c_prime
+        rhs_c_prime = -grad_c * jnp.dot(c_prime, hvp_c) / (1 + jnp.sum(grad_c**2))
 
-        return jnp.hstack([rhs_c_prime, rhs_c])
+        return jnp.hstack([rhs_c, rhs_c_prime])
 
-    term = ODETerm(f)
+    term = ODETerm(geodesic_ode)
     solver = Dopri5()
-    solution = diffeqsolve(term, solver, t0=0, t1=1, dt0=dt, y0=c_i)
-
-    return solution.ys[dim:]
+    solution = diffeqsolve(term, solver, t0=0, t1=1, dt0=dt, y0=c_i, args=(dim, hvp_fn))
+    return solution.ys[0, :dim]
 
 
 def laplace_approximation(
@@ -91,12 +91,15 @@ def laplace_approximation(
 
     match method:
         case LaplaceMethod.RIEMANN:
-            grad_fn = jax.grad(logp_fn)
+            grad_fn = jax.grad(log_p_flat)
 
             def hvp_fn(theta, v):
                 return jax.jvp(grad_fn, (theta,), (v,))
 
-            samples = expmap(method, hvp_fn, dim=dim)
+            ones = jnp.ones((dim,))
+            jax.debug.print("{} {}", grad_fn(ones), hvp_fn(ones, ones))
+
+            samples = expmap(samples, hvp_fn, dim)
 
     # Apply jax.vmap to unravel so we can unravel multiple samples at the same time
     unravel = jax.vmap(unravel)

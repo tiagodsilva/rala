@@ -6,7 +6,7 @@ import jax.scipy.optimize as jspo
 import matplotlib.pyplot as plt
 import typer
 
-from rala.laplace import laplace_approximation
+from rala.laplace import LaplaceMethod, laplace_approximation
 from rala.models import LogPosterior
 from rala.utils import plot_potential, show_kitty
 
@@ -64,21 +64,24 @@ def main(dist: DistType, epochs: int = 50, seed: int = 42, num_samples: int = 10
     ).x
 
     # Instantiate the distribution
-    model = LogPosterior(x_map, logp_fn)
+    model = LogPosterior(x_map)
 
     # Compute the Laplace Approximation
     key = jax.random.key(seed)
     samples, _, key = laplace_approximation(
         # Here there is no separation between model and data.
         # Hence the posterior distribution is simply computed by calling `model`.
-        lambda model: model(),
+        lambda model: logp_fn(model.theta),
         model,
         key=key,
         num_samples=num_samples,
+        method=LaplaceMethod.RIEMANN,
     )
     samples = samples["theta"].get_value()
 
     plot_samples(samples, x_map, logp_fn)
+
+    return
 
 
 if __name__ == "__main__":

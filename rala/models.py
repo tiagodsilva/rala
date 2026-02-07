@@ -41,10 +41,6 @@ class MLP(nnx.Module):
 # Created for compatibility with MLP, nnx.Linear, etc., i.e., other nnx modules.
 # logp_fn takes an input and returns a scalar log probability.
 class LogPosterior(nnx.Module):
-    def __init__(self, theta: jax.Array, logp_fn: callable):
+    def __init__(self, theta: jax.Array):
         self.dim = theta.shape[0]
         self.theta = nnx.Param(theta)
-        self.logp = logp_fn
-
-    def __call__(self):
-        return self.logp(self.theta)
