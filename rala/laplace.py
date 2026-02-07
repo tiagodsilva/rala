@@ -22,6 +22,7 @@ def tree_multivariate_normal(
         z = jax.random.normal(key, mean.shape)
         flat_mean = mean.ravel()
         # jnp.linalg.cholesky return L s.t. H = LL^{T}
+        # so L^{T} x = z implies x = L^{-T} z and x ~ N(0, L^{-T} L^{-1}) = N(0, (L L^{T})^{-1})
         delta = jsp.linalg.solve_triangular(cov_L, z, lower=True, trans=1)
         return (flat_mean + delta).reshape(mean.shape)
 
