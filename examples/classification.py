@@ -90,7 +90,7 @@ def log_p_from_last_layer(last_layer: nnx.Module, model: nnx.Module, X: jax.Arra
 
 @app.command()
 def main(
-    size: int = 500,
+    size: int = 1000,
     feat: int = 20,
     classes: int = 2,
     dmid: int = 64,
@@ -105,6 +105,7 @@ def main(
     X_train, y_train, X_test, y_test = split(X, y, key=rngs())
 
     model = MLP(feat, dmid, classes, rngs=rngs)
+    # model = nnx.Linear(feat, classes, rngs=rngs)
     model, _, _ = train(model, epochs, X_train, y_train, loss_fn, batch_size, rngs())
 
     # Compute accuracy on the test set
@@ -112,16 +113,17 @@ def main(
 
     key1, key2 = jax.random.split(rngs(), 2)
 
-    # Compute Laplace approximation for the last layer
-    samples_layer, _, _ = laplace_approximation(
-        partial(log_p_from_last_layer, model=model, X=X_train, y=y_train),
-        model.linear_out,
-        key1,
-        num_samples=num_samples,
-    )
+    if isinstance(model, MLP):
+        # Compute Laplace approximation for the last layer
+        samples_layer, _, _ = laplace_approximation(
+            partial(log_p_from_last_layer, model=model, X=X_train, y=y_train),
+            model.linear_out,
+            key1,
+            num_samples=num_samples,
+        )
 
-    # Compute the accuracy based on the Laplace approximation for the last layer
-    jax.debug.print("{}", acc_from_pm(pm_from_last_layer(samples_layer, model, X_test), y_test))
+        # Compute the accuracy based on the Laplace approximation for the last layer
+        jax.debug.print("{}", acc_from_pm(pm_from_last_layer(samples_layer, model, X_test), y_test))
 
     samples, graphdef, _ = laplace_approximation(
         partial(log_p, X=X_train, y=y_train),
