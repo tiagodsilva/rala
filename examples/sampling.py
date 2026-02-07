@@ -51,10 +51,6 @@ class DistType(Enum):
             return squiggle_log_density, 2
 
 
-def logp(model: LogPosterior):
-    return model()
-
-
 app = typer.Typer()
 
 
@@ -63,7 +59,11 @@ def main(dist: DistType, epochs: int = 50, seed: int = 42, num_samples: int = 10
     logp_fn, dim = dist.get()
 
     # Find MAP by maximizing the log-likelihood
-    x_map = jspo.minimize(fun=lambda x: -logp_fn(x), x0=jnp.zeros((dim,)), method="BFGS").x
+    x_map = jax.jit(jspo.minimize, static_argnames=("fun", "method"))(
+        fun=lambda x: -logp_fn(x),
+        x0=jnp.zeros((dim,)),
+        method="BFGS",
+    ).x
 
     # Instantiate the distribution
     model = LogPosterior(x_map, logp_fn)
@@ -71,7 +71,9 @@ def main(dist: DistType, epochs: int = 50, seed: int = 42, num_samples: int = 10
     # Compute the Laplace Approximation
     key = jax.random.key(seed)
     samples, _, key = laplace_approximation(
-        logp,
+        # Here there is no separation between model and data.
+        # Hence the posterior distribution is simply computed by calling `model`.
+        lambda model: model(),
         model,
         key=key,
         num_samples=num_samples,
