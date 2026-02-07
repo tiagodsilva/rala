@@ -1,3 +1,4 @@
+import pathlib
 from enum import Enum
 
 import jax
@@ -23,7 +24,7 @@ def squiggle_log_density(x, a: float = 1.5, cov: jax.Array = jnp.array([[5, 0], 
     return -jnp.dot(y, y_inv) / 2
 
 
-def plot_samples(samples: jax.Array, x_map: jax.Array, logp_fn: callable):
+def plot_samples(samples: jax.Array, x_map: jax.Array, logp_fn: callable, filename: str = None):
     # Plot the samples
     samples = samples[~jnp.isnan(samples).any(axis=1)]
     xmin, xmax = samples[:, 0].min(), samples[:, 0].max()
@@ -35,6 +36,9 @@ def plot_samples(samples: jax.Array, x_map: jax.Array, logp_fn: callable):
     ax = plt.subplot(1, 2, 2)
     plot_potential(xmin, xmax, ymin, ymax, res=2000, logp_fn=logp_fn, ax=ax)
     ax.scatter(x_map[0], x_map[1], c="red")
+
+    if filename is not None:
+        plt.savefig(filename)
 
     show_kitty()
 
@@ -80,7 +84,9 @@ def main(dist: DistType, epochs: int = 50, seed: int = 42, num_samples: int = 10
     )
     samples = samples["theta"].get_value()
 
-    plot_samples(samples, x_map, logp_fn)
+    filepath = pathlib.Path("figures/{dist.name}.png")
+    filepath.parent.mkdir(exist_ok=True)
+    plot_samples(samples, x_map, logp_fn, filepath)
 
     return
 
