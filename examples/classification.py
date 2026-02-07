@@ -96,6 +96,7 @@ def main(
     dmid: int = 64,
     epochs: int = 50,
     batch_size: int = 64,
+    num_samples: int = 512,
     seed: int = 42,
 ):
     X, y = make_classification(n_samples=size, n_features=feat, n_classes=classes, random_state=seed)
@@ -116,7 +117,7 @@ def main(
         partial(log_p_from_last_layer, model=model, X=X_train, y=y_train),
         model.linear_out,
         key1,
-        num_samples=512,
+        num_samples=num_samples,
     )
 
     # Compute the accuracy based on the Laplace approximation for the last layer
@@ -126,7 +127,7 @@ def main(
         partial(log_p, X=X_train, y=y_train),
         model,
         key2,
-        num_samples=512,
+        num_samples=num_samples,
     )
 
     # Compute accuracy from the predictive marginal
