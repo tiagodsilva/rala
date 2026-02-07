@@ -19,7 +19,7 @@ class LaplaceMethod(Enum):
 
 @jax.jit
 @partial(jax.vmap, in_axes=(0, None, None), out_axes=0)
-def tree_multivariate_normal(
+def sample_from_gaussian(
     key: jax.Array,
     mean_tree: struct.PyTreeNode,
     cov_L_tree: struct.PyTreeNode,
@@ -94,7 +94,7 @@ def laplace_approximation(
     key, *keys = jax.random.split(key, num_samples + 1)
     keys = jnp.array(keys)
 
-    samples = tree_multivariate_normal(keys, theta_map, hessian_L)
+    samples = sample_from_gaussian(keys, theta_map, hessian_L)
 
     match method:
         case LaplaceMethod.RIEMANN:
