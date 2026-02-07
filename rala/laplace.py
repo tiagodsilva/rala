@@ -12,7 +12,7 @@ from diffrax import Dopri5, ODETerm, diffeqsolve
 from jax.flatten_util import ravel_pytree
 
 
-class LaplaceMethod:
+class LaplaceMethod(Enum):
     STANDARD = "standard"
     RIEMANN = "riemann"
 
