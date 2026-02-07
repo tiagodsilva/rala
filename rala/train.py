@@ -37,7 +37,7 @@ def create_opt(
 
 def make_indices(size: int, batch_size: int, key: jax.Array):
     all_samples = jnp.arange(size)
-    # We arbitrarily expand `all_samples` to ensure its size is a multiple of batch_size
+    # We arbitrarily prune `all_samples` to ensure its size is a multiple of batch_size
     key, subkey = jax.random.split(key, 2)
     all_samples_shuffled = jax.random.permutation(subkey, all_samples)
     n_batches = size // batch_size
