@@ -43,7 +43,7 @@ def tree_multivariate_normal(
 
 @partial(jax.jit, static_argnames=("logp_fn_flat", "dim"))
 @partial(jax.vmap, in_axes=(0, None, None, None), out_axes=0)
-def expmap(sample: jax.Array, theta_map: jax.Array, logp_fn_flat: Callable, dim: int, dt: float = 0.1):
+def expmap(sample: jax.Array, theta_map: jax.Array, logp_fn_flat: Callable, dim: int, dt: float = 0.05):
     def geodesic_ode(t, y, args):
         c = y[:dim]
         c_prime = y[dim:]
@@ -79,7 +79,7 @@ def laplace_approximation(
 ) -> tuple[nnx.State, nnx.GraphDef, jax.Array]:
     state = nnx.state(model)
     graphdef = nnx.graphdef(model)
-    theta, unravel = ravel_pytree(state)
+    theta_map, unravel = ravel_pytree(state)
 
     @jax.jit
     def log_p_flat(theta):
@@ -87,18 +87,18 @@ def laplace_approximation(
         model_reconstructed = nnx.merge(graphdef, state_unflat)
         return -logp_fn(model_reconstructed)
 
-    hessian = jax.hessian(log_p_flat)(theta)
+    hessian = jax.hessian(log_p_flat)(theta_map)
     hessian_L = jnp.linalg.cholesky(hessian)
     dim, _ = hessian.shape
 
     key, *keys = jax.random.split(key, num_samples + 1)
     keys = jnp.array(keys)
 
-    samples = tree_multivariate_normal(keys, theta, hessian_L)
+    samples = tree_multivariate_normal(keys, theta_map, hessian_L)
 
     match method:
         case LaplaceMethod.RIEMANN:
-            samples = expmap(samples, theta, log_p_flat, dim)
+            samples = expmap(samples, theta_map, log_p_flat, dim)
 
     # Apply jax.vmap to unravel so we can unravel multiple samples at the same time
     unravel = jax.vmap(unravel)
