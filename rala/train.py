@@ -21,9 +21,15 @@ def split(X: jax.Array, *ys: jax.Array, p: float = 0.7, key: jax.Array):
     return split_train + split_test
 
 
-def create_opt(model: nnx.Module, lr: 1e-3, should_clip: bool = False):
+def create_opt(
+    model: nnx.Module,
+    lr: 1e-3,
+    should_clip: bool = False,
+    base: optax.GradientTransformation = optax.contrib.muon,
+    weight_decay: float = 1e-4,
+):
     clip_default = optax.clip_by_global_norm(1.0) if should_clip else optax.identity()
-    tx = optax.chain(clip_default, optax.contrib.muon(learning_rate=lr, weight_decay=1e-4))
+    tx = optax.chain(clip_default, base(learning_rate=lr, weight_decay=weight_decay))
     return nnx.Optimizer(model, tx=tx, wrt=nnx.Param)
 
 
