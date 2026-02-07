@@ -6,8 +6,6 @@ import jax.numpy as jnp
 import optax
 import tqdm
 
-from rala.models import LogPosterior
-
 
 def split(X: jax.Array, *ys: jax.Array, p: float = 0.7, key: jax.Array):
     size = len(X)
