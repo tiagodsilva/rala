@@ -41,26 +41,33 @@ def tree_multivariate_normal(
     return theta
 
 
-@partial(jax.jit, static_argnames=("hvp_fn", "dim", "dt"))
-@partial(jax.vmap, in_axes=(0, None, None), out_axes=0)
-def expmap(c_i: jax.Array, hvp_fn: callable, dim: int, dt: float = 0.1):
-    # Integrate from c_i to c_e
-    def geodesic_ode(t: float, c_c_prime: jax.Array, args):
-        dim, hvp_fn = args
-        c = c_c_prime[:dim]
-        c_prime = c_c_prime[dim:]
+@partial(jax.jit, static_argnames=("logp_fn_flat", "dim"))
+@partial(jax.vmap, in_axes=(0, None, None, None), out_axes=0)
+def expmap(sample: jax.Array, theta_map: jax.Array, logp_fn_flat: Callable, dim: int, dt: float = 0.1):
+    def geodesic_ode(t, y, args):
+        c = y[:dim]
+        c_prime = y[dim:]
 
-        grad_c, hvp_c = hvp_fn(c, c_prime)
+        grad_fn = jax.grad(logp_fn_flat)
+        grad_c, hvp_c = jax.jvp(grad_fn, (c,), (c_prime,))
 
         rhs_c = c_prime
-        rhs_c_prime = -grad_c * jnp.dot(c_prime, hvp_c) / (1 + jnp.sum(grad_c**2))
+        denominator = 1 + jnp.sum(grad_c**2)
+        rhs_c_prime = -grad_c * jnp.dot(grad_c, hvp_c) / denominator
 
-        return jnp.hstack([rhs_c, rhs_c_prime])
+        return jnp.concatenate([rhs_c, rhs_c_prime])
+
+    # We start at the MAP and move toward the sample in tangent space
+    velocity = sample - theta_map
+    y0 = jnp.concatenate([theta_map, velocity])
 
     term = ODETerm(geodesic_ode)
     solver = Dopri5()
-    solution = diffeqsolve(term, solver, t0=0, t1=1, dt0=dt, y0=c_i, args=(dim, hvp_fn))
-    return solution.ys[0, :dim]
+
+    solution = diffeqsolve(term, solver, t0=0, t1=1, dt0=dt, y0=y0)
+
+    # Return the position at t=1 (the mapped sample)
+    return solution.ys[-1, :dim]
 
 
 def laplace_approximation(
@@ -78,9 +85,9 @@ def laplace_approximation(
     def log_p_flat(theta):
         state_unflat = unravel(theta)
         model_reconstructed = nnx.merge(graphdef, state_unflat)
-        return logp_fn(model_reconstructed)
+        return -logp_fn(model_reconstructed)
 
-    hessian = -jax.hessian(log_p_flat)(theta)
+    hessian = jax.hessian(log_p_flat)(theta)
     hessian_L = jnp.linalg.cholesky(hessian)
     dim, _ = hessian.shape
 
@@ -91,15 +98,7 @@ def laplace_approximation(
 
     match method:
         case LaplaceMethod.RIEMANN:
-            grad_fn = jax.grad(log_p_flat)
-
-            def hvp_fn(theta, v):
-                return jax.jvp(grad_fn, (theta,), (v,))
-
-            ones = jnp.ones((dim,))
-            jax.debug.print("{} {}", grad_fn(ones), hvp_fn(ones, ones))
-
-            samples = expmap(samples, hvp_fn, dim)
+            samples = expmap(samples, theta, log_p_flat, dim)
 
     # Apply jax.vmap to unravel so we can unravel multiple samples at the same time
     unravel = jax.vmap(unravel)

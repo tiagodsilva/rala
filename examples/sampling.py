@@ -25,6 +25,7 @@ def squiggle_log_density(x, a: float = 1.5, cov: jax.Array = jnp.array([[5, 0], 
 
 def plot_samples(samples: jax.Array, x_map: jax.Array, logp_fn: callable):
     # Plot the samples
+    samples = samples[~jnp.isnan(samples).any(axis=1)]
     xmin, xmax = samples[:, 0].min(), samples[:, 0].max()
     ymin, ymax = samples[:, 1].min(), samples[:, 1].max()
 
