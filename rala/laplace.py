@@ -21,6 +21,7 @@ def tree_multivariate_normal(
     def sample_leaf(key: jax.Array, mean: jax.Array, cov_L: jax.Array):
         z = jax.random.normal(key, mean.shape)
         flat_mean = mean.ravel()
+        # jnp.linalg.cholesky return L s.t. H = LL^{T}
         delta = jsp.linalg.solve_triangular(cov_L, z, lower=True, trans=1)
         return (flat_mean + delta).reshape(mean.shape)
 
@@ -29,12 +30,7 @@ def tree_multivariate_normal(
     keys = jax.random.split(key, treedef.num_leaves)
     key_tree = tree_util.tree_unflatten(treedef, keys)
 
-    theta = tree_util.tree_map(
-        sample_leaf,
-        key_tree,
-        mean_tree,
-        cov_L_tree,
-    )
+    theta = sample_leaf(key_tree, mean_tree, cov_L_tree)
     return unravel(theta)
 
 
@@ -59,5 +55,5 @@ def laplace_approximation(
 
     key, *keys = jax.random.split(key, num_samples + 1)
     keys = jnp.array(keys)
-    # We assume independence between layers for multi-layered models
+
     return tree_multivariate_normal(keys, theta, hessian_L, unravel), graphdef, key
