@@ -105,7 +105,7 @@ def main(
     X_train, y_train, X_test, y_test = split(X, y, key=rngs())
 
     model = MLP(feat, dmid, classes, rngs=rngs)
-    # model = nnx.Linear(feat, classes, rngs=rngs)
+
     model, _, _ = train(model, epochs, X_train, y_train, loss_fn, batch_size, rngs())
 
     # Compute accuracy on the test set

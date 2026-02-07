@@ -35,13 +35,3 @@ class MLP(nnx.Module):
         )
         y = self.linear_out(y)
         return y
-
-
-class Linear(nnx.Module):
-    def __init__(self, din: int, dout: int, *, rngs: nnx.Rngs):
-        self.din = din
-        self.dout = dout
-        self.linear = nnx.Linear(self.din, self.dout, rngs=rngs)
-
-    def __call__(self, x: jax.Array):
-        return self.linear(x)
