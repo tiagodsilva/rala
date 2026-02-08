@@ -38,7 +38,7 @@ def to_hausdorff(logp_fn: callable):
         _, logdet = jnp.linalg.slogdet(metric_fn(theta))
         return logp_fn(theta) - 0.5 * logdet
 
-    return logp_hausdorff, metric_fn
+    return logp_hausdorff
 
 
 def plot_samples(samples: jax.Array, x_map: jax.Array, logp_fn: callable, filename: str = None):
@@ -84,13 +84,11 @@ def main(
 ):
     logp_fn, dim = dist.get()
 
-    if use_hausdorff:
-        # Use Hausdorff's base measure
-        logp_fn, metric_fn = to_hausdorff(logp_fn)
+    logp_fn_map = to_hausdorff(logp_fn) if use_hausdorff else logp_fn
 
     # Find MAP by maximizing the log-likelihood
     x_map = jax.jit(jspo.minimize, static_argnames=("fun", "method"))(
-        fun=lambda x: -logp_fn(x),
+        fun=lambda x: -logp_fn_map(x),
         x0=jnp.zeros((dim,)),
         method="BFGS",
     ).x
