@@ -8,13 +8,14 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import jax.tree_util as tree_util
-from diffrax import Dopri5, ODETerm, diffeqsolve
+from diffrax import Dopri5, ODETerm, PIDController, diffeqsolve
 from jax.flatten_util import ravel_pytree
 
 
 class LaplaceMethod(Enum):
     STANDARD = "standard"
     RIEMANN = "riemann"
+    MONGE = "monge"
     FISHER = "fisher"
 
 
@@ -44,7 +45,13 @@ def sample_from_gaussian(
 
 @partial(jax.jit, static_argnames=("logp_fn_flat", "dim"))
 @partial(jax.vmap, in_axes=(0, None, None, None), out_axes=0)
-def rexpmap(sample: jax.Array, theta_map: jax.Array, logp_fn_flat: Callable, dim: int, dt: float = 0.05):
+def rexpmap(
+    sample: jax.Array,
+    theta_map: jax.Array,
+    logp_fn_flat: Callable,
+    dim: int,
+    dt: float = None,
+):
     # Exponential map for Riemann
     def geodesic_ode(t, y, args):
         c = y[:dim]
@@ -66,7 +73,15 @@ def rexpmap(sample: jax.Array, theta_map: jax.Array, logp_fn_flat: Callable, dim
     term = ODETerm(geodesic_ode)
     solver = Dopri5()
 
-    solution = diffeqsolve(term, solver, t0=0, t1=1, dt0=dt, y0=y0)
+    solution = diffeqsolve(
+        term,
+        solver,
+        t0=0,
+        t1=1,
+        dt0=dt,
+        stepsize_controller=PIDController(rtol=1e-3, atol=1e-6),
+        y0=y0,
+    )
 
     # Return the position at t=1 (the mapped sample)
     return solution.ys[-1, :dim]
@@ -79,7 +94,7 @@ def fexpmap(
     theta_map: jax.Array,
     metric_fn: callable,
     dim: int,
-    dt: float = 0.05,
+    dt: float = None,
 ):
     def geodesic_ode(t, y, args):
         theta = y[:dim]
@@ -124,7 +139,15 @@ def fexpmap(
     # We use the Dormand-Prince 5/4 method for the corresponding ODE
     term = ODETerm(geodesic_ode)
     solver = Dopri5()
-    solution = diffeqsolve(term, solver, t0=0, t1=1, dt0=dt, y0=y0)
+    solution = diffeqsolve(
+        term,
+        solver,
+        t0=0,
+        t1=1,
+        dt0=dt,
+        stepsize_controller=PIDController(rtol=1e-3, atol=1e-6),
+        y0=y0,
+    )
 
     return solution.ys[-1, :dim]
 
@@ -135,6 +158,7 @@ def laplace_approximation(
     key: jax.Array,
     num_samples: int,
     method: LaplaceMethod = LaplaceMethod.STANDARD,
+    metric_fn: callable = None,
 ) -> tuple[nnx.State, nnx.GraphDef, jax.Array]:
     state = nnx.state(model)
     graphdef = nnx.graphdef(model)
@@ -158,12 +182,15 @@ def laplace_approximation(
     match method:
         case LaplaceMethod.RIEMANN:
             samples = rexpmap(samples, theta_map, log_p_flat, dim)
-        case LaplaceMethod.FISHER:
+        case LaplaceMethod.MONGE:
 
             def metric_fn(theta):
                 grad_log_p = jax.grad(log_p_flat)(theta)
                 return jnp.eye(dim) + jnp.outer(grad_log_p, grad_log_p)
 
+            samples = fexpmap(samples, theta_map, metric_fn, dim)
+        case LaplaceMethod.FISHER:
+            assert metric_fn is not None, "`metric_fn` should be provided when `FISHER` is used"
             samples = fexpmap(samples, theta_map, metric_fn, dim)
 
     # Apply jax.vmap to unravel so we can unravel multiple samples at the same time
