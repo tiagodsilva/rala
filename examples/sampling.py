@@ -1,10 +1,8 @@
 import pathlib
 from enum import Enum
-from functools import partial
 
 import jax
 import jax.numpy as jnp
-import jax.scipy as jsp
 import jax.scipy.optimize as jspo
 import matplotlib.pyplot as plt
 import typer
