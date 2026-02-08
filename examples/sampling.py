@@ -54,6 +54,8 @@ def plot_samples(samples: jax.Array, x_map: jax.Array, logp_fn: callable, filena
     plot_potential(xmin, xmax, ymin, ymax, res=2000, logp_fn=logp_fn, ax=ax)
     ax.scatter(x_map[0], x_map[1], c="red")
 
+    plt.tight_layout()
+
     if filename is not None:
         plt.savefig(filename)
 
