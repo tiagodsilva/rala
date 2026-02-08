@@ -15,6 +15,7 @@ from jax.flatten_util import ravel_pytree
 class LaplaceMethod(Enum):
     STANDARD = "standard"
     RIEMANN = "riemann"
+    FISHER = "fisher"
 
 
 @jax.jit
@@ -43,7 +44,8 @@ def sample_from_gaussian(
 
 @partial(jax.jit, static_argnames=("logp_fn_flat", "dim"))
 @partial(jax.vmap, in_axes=(0, None, None, None), out_axes=0)
-def expmap(sample: jax.Array, theta_map: jax.Array, logp_fn_flat: Callable, dim: int, dt: float = 0.05):
+def rexpmap(sample: jax.Array, theta_map: jax.Array, logp_fn_flat: Callable, dim: int, dt: float = 0.05):
+    # Exponential map for Riemann
     def geodesic_ode(t, y, args):
         c = y[:dim]
         c_prime = y[dim:]
@@ -67,6 +69,63 @@ def expmap(sample: jax.Array, theta_map: jax.Array, logp_fn_flat: Callable, dim:
     solution = diffeqsolve(term, solver, t0=0, t1=1, dt0=dt, y0=y0)
 
     # Return the position at t=1 (the mapped sample)
+    return solution.ys[-1, :dim]
+
+
+@partial(jax.jit, static_argnames=("metric_fn", "dim", "dt"))
+@partial(jax.vmap, in_axes=(0, None, None, None), out_axes=0)
+def fexpmap(
+    sample: jax.Array,
+    theta_map: jax.Array,
+    metric_fn: callable,
+    dim: int,
+    dt: float = 0.05,
+):
+    def geodesic_ode(t, y, args):
+        theta = y[:dim]
+        theta_prime = y[dim:]
+
+        G = metric_fn(theta)
+        # This seems to be needed; however, it is probably computationally prohibitive in large dimensions
+        G_inv = jnp.linalg.inv(G)
+
+        # Compute the Christoffel contraction
+        # \theta'^{T} G \theta'
+        def v_G_v(theta_val):
+            return jnp.dot(theta_prime, jnp.dot(metric_fn(theta_val), theta_prime))
+
+        # The gradient of this function is \sum_{j} v_{i} \partial_{i} G(\theta) v_{j}
+        # The Christoffel symbols are defined as
+        # .5 \sum_{l} G^{kl} (\partial_{i} G_{jl} + \partial_{j} G_{il} - \partial_{l} G_{ij})
+        # This is \Gamma_{ij}^{k}. Summing over v_i, v_j, we get (since G is symmetric)
+        # .5 \sum_{i, j} v_{i} \sum_{l} G^{kl} (\partial_{i} G_{jl} + \partial_{j} G_{il} - \partial_{l} G_{ij}) v_{j}
+        # = \sum_{i, j} v_{i} \cdot ( \sum_{l} G^{kl} (\partial_{i} G_{jl}) - .5 \sum_{l} \partial_{l} G_{ij} ) v_{j}
+        # = \sum_{i, j} v_{i} v_{j} \sum_{l} \partial_{i} G_{jl} - .5 * v_{i} v_{j} \sum_{l} \partial_{l} G_{ij}
+
+        # The differential of G is a R^{d d d} matrix
+        # Let i, j, k be the indices
+        # This represents the i, j matrix with entries \sum_{k} \partial_{k} G_{ij}(\theta) v_{k}
+        _, term1 = jax.jvp(metric_fn, (theta,), (theta_prime,))
+        # This is a vector s.t. the j-th entry is \sum_{i, k} v_{i} \partial_{k} G_{ij}(\theta) v_{k}
+        # Re-indexing, this becomes (k <-> j)
+        # \sum_{i, j} v_{i} \partial_{j} G_{ik}(\theta) v_{j},
+        # which is exactly the term we needed above for the Christoffel contraction.
+        term1 = term1 @ theta_prime
+        # And this is a vector with entries \sum_{j} v_{i} v_{j} \partial_{i} G_{ij}(\theta) with index i
+        term2 = 0.5 * jax.grad(v_G_v)(theta)
+        acceleration = -G_inv @ (term1 - term2)
+
+        return jnp.concatenate([theta_prime, acceleration])
+
+    # Again, we sample the velocity from the shifted Laplace approximation
+    velocity = sample - theta_map
+    y0 = jnp.concatenate([theta_map, velocity])
+
+    # We use the Dormand-Prince 5/4 method for the corresponding ODE
+    term = ODETerm(geodesic_ode)
+    solver = Dopri5()
+    solution = diffeqsolve(term, solver, t0=0, t1=1, dt0=dt, y0=y0)
+
     return solution.ys[-1, :dim]
 
 
@@ -98,7 +157,14 @@ def laplace_approximation(
 
     match method:
         case LaplaceMethod.RIEMANN:
-            samples = expmap(samples, theta_map, log_p_flat, dim)
+            samples = rexpmap(samples, theta_map, log_p_flat, dim)
+        case LaplaceMethod.FISHER:
+
+            def metric_fn(theta):
+                grad_log_p = jax.grad(log_p_flat)(theta)
+                return jnp.eye(dim) + jnp.outer(grad_log_p, grad_log_p)
+
+            samples = fexpmap(samples, theta_map, metric_fn, dim)
 
     # Apply jax.vmap to unravel so we can unravel multiple samples at the same time
     unravel = jax.vmap(unravel)
