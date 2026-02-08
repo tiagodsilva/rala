@@ -12,7 +12,7 @@ from rala.models import LogPosterior
 from rala.utils import plot_potential, show_kitty
 
 
-def banana_log_density(x, b: float = 20):
+def banana_log_density(x, b: float = 6):
     x_sq = x * x
     log_p = x_sq[0] + (x[1] - b * (x_sq[0] - 1)) ** 2
     return -log_p
@@ -86,6 +86,7 @@ def main(
 ):
     logp_fn, dim = dist.get()
 
+    # We may use a different measure for computing the MAP
     logp_fn_map = to_hausdorff(logp_fn) if use_hausdorff else logp_fn
 
     # Find MAP by maximizing the log-likelihood
