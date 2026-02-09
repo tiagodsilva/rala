@@ -10,6 +10,7 @@ import jax.scipy as jsp
 import jax.tree_util as tree_util
 from diffrax import Dopri5, ODETerm, PIDController, diffeqsolve
 from jax.flatten_util import ravel_pytree
+from jaxhmc.mcmc import RandomWalkConfig, random_walk
 
 
 class LaplaceMethod(Enum):
@@ -17,6 +18,7 @@ class LaplaceMethod(Enum):
     RIEMANN = "riemann"
     MONGE = "monge"
     FISHER = "fisher"
+    RANDOM_WALK = "random-walk"
 
 
 @jax.jit
@@ -192,6 +194,10 @@ def laplace_approximation(
         case LaplaceMethod.FISHER:
             assert metric_fn is not None, "`metric_fn` should be provided when `FISHER` is used"
             samples = fexpmap(samples, theta_map, metric_fn, dim)
+        case LaplaceMethod.RANDOM_WALK:
+            config = RandomWalkConfig(key=key, iterations=50, tuning_steps=10)
+            samples = random_walk(log_p_flat, samples, config)
+            samples = samples[-1]
 
     # Apply jax.vmap to unravel so we can unravel multiple samples at the same time
     unravel = jax.vmap(unravel)
