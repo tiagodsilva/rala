@@ -167,12 +167,12 @@ def laplace_approximation(
     theta_map, unravel = ravel_pytree(state)
 
     @jax.jit
-    def log_p_flat(theta):
+    def neg_log_p_flat(theta):
         state_unflat = unravel(theta)
         model_reconstructed = nnx.merge(graphdef, state_unflat)
         return -logp_fn(model_reconstructed)
 
-    hessian = jax.hessian(log_p_flat)(theta_map)
+    hessian = jax.hessian(neg_log_p_flat)(theta_map)
     hessian_L = jnp.linalg.cholesky(hessian)
     dim, _ = hessian.shape
 
@@ -181,9 +181,16 @@ def laplace_approximation(
 
     samples = sample_from_gaussian(keys, theta_map, hessian_L)
 
+    @jax.jit
+    def log_p_flat(theta):
+        state_unflat = unravel(theta)
+        model_reconstructed = nnx.merge(graphdef, state_unflat)
+        return logp_fn(model_reconstructed)
+
     match method:
         case LaplaceMethod.RIEMANN:
-            samples = rexpmap(samples, theta_map, log_p_flat, dim)
+            # loss function = negative log likelihood
+            samples = rexpmap(samples, theta_map, neg_log_p_flat, dim)
         case LaplaceMethod.MONGE:
 
             def metric_fn(theta):
