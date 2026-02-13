@@ -18,7 +18,6 @@ class LaplaceMethod(Enum):
     RIEMANN = "riemann"
     MONGE = "monge"
     FISHER = "fisher"
-    RANDOM_WALK = "random-walk"
     HMC = "hmc"
 
 
@@ -162,6 +161,8 @@ def laplace_approximation(
     num_samples: int,
     method: LaplaceMethod = LaplaceMethod.STANDARD,
     metric_fn: callable = None,
+    rwmc_refine: bool = False,
+    hmc_refine: bool = False,
 ) -> tuple[nnx.State, nnx.GraphDef, jax.Array]:
     state = nnx.state(model)
     graphdef = nnx.graphdef(model)
@@ -202,23 +203,25 @@ def laplace_approximation(
         case LaplaceMethod.FISHER:
             assert metric_fn is not None, "`metric_fn` should be provided when `FISHER` is used"
             samples = fexpmap(samples, theta_map, metric_fn, dim)
-        case LaplaceMethod.RANDOM_WALK:
-            config = RandomWalkConfig(key=key, iterations=500, tuning_steps=10)
-            samples = random_walk(neg_log_p_flat, samples, config)
-            samples = samples[-1]
-        case LaplaceMethod.HMC:
-            config = HMCConfig(
-                initial_step_size=0.01,
-                max_path_len=1,
-                iterations=500,
-                initial_precm=jnp.cov(samples, rowvar=False),
-                key=key,
-                fast_tuning_steps=0,
-                slow_tuning_phases=0,
-                slow_tuning_initial_length=0,
-            )
-            _, samples = hmc(neg_log_p_flat, samples, config)
-            samples = samples[-1]
+
+    if rwmc_refine:
+        config = RandomWalkConfig(key=key, iterations=100, tuning_steps=10)
+        samples = random_walk(neg_log_p_flat, samples, config)
+        samples = samples[-1]
+
+    if hmc_refine:
+        config = HMCConfig(
+            initial_step_size=0.01,
+            max_path_len=1,
+            iterations=50,
+            initial_precm=jnp.cov(samples, rowvar=False),
+            key=key,
+            fast_tuning_steps=0,
+            slow_tuning_phases=0,
+            slow_tuning_initial_length=0,
+        )
+        _, samples = hmc(neg_log_p_flat, samples, config)
+        samples = samples[-1]
 
     # Apply jax.vmap to unravel so we can unravel multiple samples at the same time
     unravel = jax.vmap(unravel)

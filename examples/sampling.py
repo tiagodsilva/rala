@@ -83,6 +83,8 @@ def main(
     num_samples: int = 1000,
     method: LaplaceMethod = LaplaceMethod.RIEMANN,
     use_hausdorff: bool = False,
+    rwmc: bool = False,
+    hmc: bool = False,
 ):
     logp_fn, dim = dist.get()
 
@@ -109,6 +111,8 @@ def main(
         key=key,
         num_samples=num_samples,
         method=method,
+        rwmc_refine=rwmc,
+        hmc_refine=hmc,
     )
     samples = samples["theta"].get_value()
 
