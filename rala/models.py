@@ -4,7 +4,11 @@ import flax.nnx as nnx
 import flax.struct as struct
 import jax
 
-ExtraParams = TypeVar("ExtraParams", bound=struct.PyTreeNode)
+ExtraParamsType = TypeVar("ExtraParams", bound=nnx.Variable)
+
+
+class ExtraParamWrapper(nnx.Param):
+    pass
 
 
 def forward(x: jax.Array, layer: nnx.Module):
@@ -13,8 +17,8 @@ def forward(x: jax.Array, layer: nnx.Module):
     return y, None
 
 
-class MLP(nnx.Module, Generic[ExtraParams]):
-    extra_params: Optional[ExtraParams]
+class MLP(nnx.Module, Generic[ExtraParamsType]):
+    extra_params: Optional[ExtraParamsType]
 
     def __init__(
         self,
@@ -22,7 +26,7 @@ class MLP(nnx.Module, Generic[ExtraParams]):
         dmid: int,
         dout: int,
         nlayers: int = 1,
-        extra_params: Optional[ExtraParams] = None,
+        extra_params: Optional[ExtraParamsType] = None,
         *,
         rngs: nnx.Rngs,
     ):
@@ -31,7 +35,9 @@ class MLP(nnx.Module, Generic[ExtraParams]):
         self.dmid = dmid if nlayers > 0 else din
         self.dout = dout
         self.nlayers = nlayers
-        self.extra_params = nnx.Param(extra_params) if extra_params else None
+        self.extra_params = (
+            ExtraParamWrapper(extra_params) if extra_params else None
+        )
 
         @nnx.split_rngs(splits=nlayers)
         @nnx.vmap(in_axes=(0,), out_axes=0)
