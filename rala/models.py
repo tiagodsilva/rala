@@ -1,5 +1,10 @@
+from typing import Generic, Optional, TypeVar
+
 import flax.nnx as nnx
+import flax.struct as struct
 import jax
+
+ExtraParams = TypeVar("ExtraParams", bound=struct.PyTreeNode)
 
 
 def forward(x: jax.Array, layer: nnx.Module):
@@ -8,13 +13,25 @@ def forward(x: jax.Array, layer: nnx.Module):
     return y, None
 
 
-class MLP(nnx.Module):
-    def __init__(self, din: int, dmid: int, dout: int, nlayers: int = 1, *, rngs: nnx.Rngs):
+class MLP(nnx.Module, Generic[ExtraParams]):
+    extra_params: Optional[ExtraParams]
+
+    def __init__(
+        self,
+        din: int,
+        dmid: int,
+        dout: int,
+        nlayers: int = 1,
+        extra_params: Optional[ExtraParams] = None,
+        *,
+        rngs: nnx.Rngs,
+    ):
         # nlayers = 0 implies linear regression
         self.din = din
         self.dmid = dmid if nlayers > 0 else din
         self.dout = dout
         self.nlayers = nlayers
+        self.extra_params = nnx.Param(extra_params) if extra_params else None
 
         @nnx.split_rngs(splits=nlayers)
         @nnx.vmap(in_axes=(0,), out_axes=0)
@@ -44,3 +61,11 @@ class LogPosterior(nnx.Module):
     def __init__(self, theta: jax.Array):
         self.dim = theta.shape[0]
         self.theta = nnx.Param(theta)
+
+
+def reconstruct_model(last_layer: struct.PyTreeNode, model: nnx.Module):
+    state = nnx.state(model)
+    graphdef = nnx.graphdef(model)
+    state["linear_out"] = last_layer
+    model_from_layer = nnx.merge(graphdef, state)
+    return model_from_layer

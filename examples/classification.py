@@ -1,7 +1,6 @@
 from functools import partial
 
 import flax.nnx as nnx
-import flax.struct as struct
 import jax
 import jax.numpy as jnp
 import optax
@@ -10,25 +9,17 @@ from flax.nnx.graph import GraphDef
 from sklearn.datasets import make_classification
 
 from rala.laplace import LaplaceMethod, laplace_approximation
-from rala.models import MLP
+from rala.models import MLP, reconstruct_model
 from rala.train import split, train
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
 
 # @jax.jit
-def loss_fn(y_pred: jax.Array, y_true: jax.Array):
+def loss_fn(y_pred: jax.Array, y_true: jax.Array, _: MLP):
     y_true_onehot = jax.nn.one_hot(y_true, y_pred.shape[1])
     loss = optax.softmax_cross_entropy(y_pred, y_true_onehot).mean()
     return loss
-
-
-def reconstruct_model(last_layer: struct.PyTreeNode, model: nnx.Module):
-    state = nnx.state(model)
-    graphdef = nnx.graphdef(model)
-    state["linear_out"] = last_layer
-    model_from_layer = nnx.merge(graphdef, state)
-    return model_from_layer
 
 
 def acc(model: MLP, X: jax.Array, y: jax.Array):
@@ -46,7 +37,9 @@ def pm(samples: jax.Array, graphdef: GraphDef, X: jax.Array):
 
 
 @partial(jax.vmap, in_axes=(0, None, None), out_axes=0)
-def pm_from_last_layer(samples_layer: jax.Array, model: jax.Array, X: jax.Array):
+def pm_from_last_layer(
+    samples_layer: jax.Array, model: jax.Array, X: jax.Array
+):
     model = reconstruct_model(samples_layer, model)
     logits = model(X)
     logits = nnx.log_softmax(logits, axis=1)
@@ -82,7 +75,9 @@ def log_p(model: nnx.Module, X: jax.Array, y: jax.Array, sigma_p: float = 5):
 
 
 @jax.jit
-def log_p_from_last_layer(last_layer: nnx.Module, model: nnx.Module, X: jax.Array, y: jax.Array):
+def log_p_from_last_layer(
+    last_layer: nnx.Module, model: nnx.Module, X: jax.Array, y: jax.Array
+):
     last_layer_state = nnx.state(last_layer)
     model_from_layer = reconstruct_model(last_layer_state, model)
     return log_p(model_from_layer, X, y)
@@ -100,14 +95,18 @@ def main(
     seed: int = 42,
     method: LaplaceMethod = LaplaceMethod.STANDARD,
 ):
-    X, y = make_classification(n_samples=size, n_features=feat, n_classes=classes, random_state=seed)
+    X, y = make_classification(
+        n_samples=size, n_features=feat, n_classes=classes, random_state=seed
+    )
 
     rngs = nnx.Rngs(seed)
     X_train, y_train, X_test, y_test = split(X, y, key=rngs())
 
     model = MLP(feat, dmid, classes, rngs=rngs)
 
-    model, _, _ = train(model, epochs, X_train, y_train, loss_fn, batch_size, rngs())
+    model, _, _ = train(
+        model, epochs, X_train, y_train, loss_fn, batch_size, rngs()
+    )
 
     # Compute accuracy on the test set
     jax.debug.print("{}", acc(model, X_test, y_test))
@@ -125,7 +124,12 @@ def main(
         )
 
         # Compute the accuracy based on the Laplace approximation for the last layer
-        jax.debug.print("{}", acc_from_pm(pm_from_last_layer(samples_layer, model, X_test), y_test))
+        jax.debug.print(
+            "{}",
+            acc_from_pm(
+                pm_from_last_layer(samples_layer, model, X_test), y_test
+            ),
+        )
 
     samples, graphdef, _ = laplace_approximation(
         partial(log_p, X=X_train, y=y_train),

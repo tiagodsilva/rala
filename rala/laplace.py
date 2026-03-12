@@ -20,6 +20,8 @@ class LaplaceMethod(Enum):
     FISHER = "fisher"
     HMC = "hmc"
 
+    OPT = "opt"  # Optimization-based Laplace approximation.
+
 
 @jax.jit
 @partial(jax.vmap, in_axes=(0, None, None), out_axes=0)
@@ -109,7 +111,9 @@ def fexpmap(
         # Compute the Christoffel contraction
         # \theta'^{T} G \theta'
         def v_G_v(theta_val):
-            return jnp.dot(theta_prime, jnp.dot(metric_fn(theta_val), theta_prime))
+            return jnp.dot(
+                theta_prime, jnp.dot(metric_fn(theta_val), theta_prime)
+            )
 
         # The gradient of this function is \sum_{j} v_{i} \partial_{i} G(\theta) v_{j}
         # The Christoffel symbols are defined as
@@ -135,7 +139,7 @@ def fexpmap(
         return jnp.concatenate([theta_prime, acceleration])
 
     # Again, we sample the velocity from the shifted Laplace approximation
-    velocity = sample - theta_map
+    velocity = sample - theta_map  # sample ~ N(theta_map, -H)
     y0 = jnp.concatenate([theta_map, velocity])
 
     # We use the Dormand-Prince 5/4 method for the corresponding ODE
@@ -152,6 +156,18 @@ def fexpmap(
     )
 
     return solution.ys[-1, :dim]
+
+
+@partial(jax.vmap, in_axes=(0, None, None, None), out_axes=0)
+def alogmap(
+    sample: jax.Array,
+    theta_map: jax.Array,
+    metric_on_map: jax.Array,
+    jacobian_on_map: jax.Array,
+    dim: int,
+):
+    # We first compute the KL divergence between sample and theta_map
+    logm = metric_on_map
 
 
 def laplace_approximation(
@@ -201,8 +217,14 @@ def laplace_approximation(
 
             samples = fexpmap(samples, theta_map, metric_fn, dim)
         case LaplaceMethod.FISHER:
-            assert metric_fn is not None, "`metric_fn` should be provided when `FISHER` is used"
+            assert metric_fn is not None, (
+                "`metric_fn` should be provided when `FISHER` is used"
+            )
             samples = fexpmap(samples, theta_map, metric_fn, dim)
+        case LaplaceMethod.OPT:
+            # velocity = samples - theta_map
+            # samples = solve(velocity, metric_fn)
+            samples = solve_opt(samples, theta_map, metric_fn, dim)
 
     if rwmc_refine:
         config = RandomWalkConfig(key=key, iterations=100, tuning_steps=10)

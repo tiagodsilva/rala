@@ -8,7 +8,11 @@ import matplotlib.pyplot as plt
 
 
 def is_kitty():
-    return os.environ.get("TERM", "").startswith("xterm-kitty")
+    term = os.environ.get("TERM", "")
+    # Both terminals support graphics
+    is_kitty = term.startswith("xterm-kitty")
+    is_ghostty = term.startswith("xterm-ghostty")
+    return is_kitty or is_ghostty
 
 
 def show_kitty():

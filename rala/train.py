@@ -28,8 +28,33 @@ def create_opt(
     base: optax.GradientTransformation = optax.contrib.muon,
     weight_decay: float = 1e-4,
 ):
-    clip_default = optax.clip_by_global_norm(1.0) if should_clip else optax.identity()
-    tx = optax.chain(clip_default, base(learning_rate=lr, weight_decay=weight_decay))
+
+    params = nnx.state(model, nnx.Param)
+
+    # JAX's way of labeling parameters, which allows different optimizers
+    # to be used for different parameter groups. Quite unreadable.
+    def label_params(path, _):
+        if "extra_params" in path:
+            return "extra_params"
+        return "default"
+
+    param_labels = nnx.map_state(label_params, params)
+
+    clip_default = (
+        optax.clip_by_global_norm(1.0) if should_clip else optax.identity()
+    )
+    tx = optax.multi_transform(
+        {
+            "default": optax.chain(
+                clip_default, base(learning_rate=lr, weight_decay=weight_decay)
+            ),
+            "extra_params": optax.chain(
+                clip_default, optax.sgd(learning_rate=lr, nesterov=True)
+            ),
+        },
+        param_labels,
+    )
+
     return nnx.Optimizer(model, tx=tx, wrt=nnx.Param)
 
 
@@ -56,7 +81,7 @@ def update(
         X_batch = jnp.take(X, indices, axis=0)
         y_batch = jnp.take(y, indices, axis=0)
         y_pred = model(X_batch)
-        return loss_fn(y_pred, y_batch)
+        return loss_fn(y_pred, y_batch, model)
 
     loss, grads = nnx.value_and_grad(step, argnums=0)(model)
     opt.update(model, grads)
