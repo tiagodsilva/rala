@@ -107,8 +107,10 @@ def main(
     model = MLP(X.shape[1], dmid, 1, extra_params=extra_params, rngs=rngs)
 
     # Find the MAP (minimize the negative log posterior)
-    def loss_fn(X: jax.Array, y: jax.Array, model: MLP[ExtraParams]):
-        return -log_p(model, X, y)
+    def loss_fn(y_pred: jax.Array, y: jax.Array, model: MLP[ExtraParams]):
+        log_lik = log_lik_fn(y_pred, y, model)
+        log_prior = log_prior_fn(model)
+        return -(log_lik + log_prior)
 
     model, _, _ = train(model, epochs, X, y, loss_fn, batch_size, rngs())
 
