@@ -52,7 +52,7 @@ def log_lik_fn(y_pred: jax.Array, y_true: jax.Array, model: MLP[ExtraParams]):
     return loglik.sum()
 
 
-def log_prior_fn(model: MLP[ExtraParams], sigma_p: float = 1e2):
+def log_prior_fn(model: MLP[ExtraParams], sigma_p: float = 5):
     # We only want to regularize 'Param' types (weights/biases), not 'BatchStat'
     params = nnx.state(model, nnx.Param, nnx.Not(ExtraParamWrapper))
 
