@@ -7,6 +7,7 @@ import flax.struct as struct
 import jax
 import jax.numpy as jnp
 import jax.tree_util as tree_util
+import optax
 from diffrax import Dopri5, ODETerm, PIDController, diffeqsolve
 from jax.flatten_util import ravel_pytree
 from jaxhmc.mcmc import HMCConfig, RandomWalkConfig, hmc, random_walk
@@ -22,7 +23,7 @@ class LaplaceMethod(Enum):
     OPT = "opt"  # Optimization-based Laplace approximation.
 
 
-def spectral_decomp(m: jax.Array, min: float = 1e-6, max: float = 1e6):
+def spectral_decomp(m: jax.Array, min: float = 1e-6, max: float = 1e8):
     # Ensure the eigenvalues of the matrix m are in between `min` and `max`
     out = jnp.linalg.eigh(m)
 
@@ -178,6 +179,42 @@ def alogmap(
     logm = metric_on_map
 
 
+def find_map(
+    neg_log_p_flat: Callable,
+    theta_init: jax.Array,
+    max_iterations: int = 10_000,
+    tol: float = 1e-5,
+) -> jax.Array:
+    # The purpose of this function may sound mystical;
+    # wasn't the maximum a posteriori found by the training algorithm?
+    # Yes.
+    # The only reason this function exists is to ensure the found point is also stationary.
+    optimizer = optax.lbfgs()
+    opt_state = optimizer.init(theta_init)
+    theta = theta_init
+
+    @jax.jit
+    def step(theta, opt_state):
+        loss, grad = jax.value_and_grad(neg_log_p_flat)(theta)
+        updates, opt_state = optimizer.update(
+            grad,
+            opt_state,
+            theta,
+            value=loss,
+            grad=grad,
+            value_fn=neg_log_p_flat,
+        )
+        return optax.apply_updates(theta, updates), opt_state, loss, grad
+
+    for _ in range(max_iterations):
+        theta, opt_state, _, grad = step(theta, opt_state)
+        grad_norm = jnp.max(jnp.abs(grad))
+        if grad_norm < tol:
+            return theta
+
+    return theta
+
+
 def laplace_approximation(
     logp_fn: Callable[[nnx.Module], float],
     model: nnx.Module,
@@ -203,6 +240,18 @@ def laplace_approximation(
     @jax.jit
     def neg_log_p_flat(theta, extra_state: struct.PyTreeNode):
         return -log_p_flat(theta, extra_state)
+
+    theta_map = find_map(
+        partial(neg_log_p_flat, extra_state=extra_state),
+        theta_map,  # pre-trained weights as warm start
+    )
+
+    grad_at_map = jax.grad(partial(neg_log_p_flat, extra_state=extra_state))(
+        theta_map
+    )
+    print(
+        "max grad", jnp.max(jnp.abs(grad_at_map))
+    )  # should be ~1e-5 or smaller
 
     (dim,) = theta_map.shape
     hessian = jax.hessian(partial(neg_log_p_flat, extra_state=extra_state))(
@@ -245,7 +294,9 @@ def laplace_approximation(
 
     if rwmc_refine:
         config = RandomWalkConfig(key=key, iterations=100, tuning_steps=10)
-        samples = random_walk(neg_log_p_flat, samples, config)
+        samples = random_walk(
+            partial(neg_log_p_flat, extra_state=extra_state), samples, config
+        )
         samples = samples[-1]
 
     if hmc_refine:
@@ -259,7 +310,9 @@ def laplace_approximation(
             slow_tuning_phases=0,
             slow_tuning_initial_length=0,
         )
-        _, samples = hmc(neg_log_p_flat, samples, config)
+        _, samples = hmc(
+            partial(neg_log_p_flat, extra_state=extra_state), samples, config
+        )
         samples = samples[-1]
 
     # Apply jax.vmap to unravel so we can unravel multiple samples at the same time

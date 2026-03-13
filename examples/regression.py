@@ -111,6 +111,7 @@ def main(
     seed: int = 42,
     method: LaplaceMethod = LaplaceMethod.STANDARD,
     last_layer: bool = False,
+    rwmc: bool = False,
 ):
 
     match dataset:
@@ -154,6 +155,7 @@ def main(
         num_samples=num_samples,
         method=method,
         extra_state=extra_state,
+        rwmc_refine=rwmc,
     )
 
     match dataset:

@@ -48,14 +48,22 @@ class MLP(nnx.Module, Generic[ExtraParamsType]):
             ExtraParamsWrapper(extra_params) if extra_params else None
         )
 
+        initializer = nnx.initializers.lecun_uniform()
+
         @nnx.split_rngs(splits=nlayers)
         @nnx.vmap(in_axes=(0,), out_axes=0)
         def create_layer(rngs: nnx.Rngs):
-            return nnx.Linear(self.dmid, self.dmid, rngs=rngs)
+            return nnx.Linear(
+                self.dmid, self.dmid, rngs=rngs, kernel_init=initializer
+            )
 
-        self.linear_in = nnx.Linear(self.din, self.dmid, rngs=rngs)
+        self.linear_in = nnx.Linear(
+            self.din, self.dmid, rngs=rngs, kernel_init=initializer
+        )
         self.layers = create_layer(rngs)
-        self.linear_out = nnx.Linear(self.dmid, self.dout, rngs=rngs)
+        self.linear_out = nnx.Linear(
+            self.dmid, self.dout, rngs=rngs, kernel_init=initializer
+        )
 
     def __call__(self, x: jax.Array):
         y = self.linear_in(x)
