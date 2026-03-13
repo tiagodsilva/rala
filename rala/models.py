@@ -126,11 +126,3 @@ class LogPosterior(nnx.Module):
     def __init__(self, theta: jax.Array):
         self.dim = theta.shape[0]
         self.theta = nnx.Param(theta)
-
-
-def reconstruct_model(last_layer: struct.PyTreeNode, model: nnx.Module):
-    state = nnx.state(model)
-    graphdef = nnx.graphdef(model)
-    state["linear_out"] = last_layer
-    model_from_layer = nnx.merge(graphdef, state)
-    return model_from_layer

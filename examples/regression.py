@@ -10,8 +10,7 @@ import matplotlib.pyplot as plt
 import typer
 
 from rala.laplace import LaplaceMethod, laplace_approximation
-from rala.models import ExtraParamsWrapper
-from rala.models import MLPLastLayer as MLP
+from rala.models import MLP, ExtraParamsWrapper, MLPLastLayer
 from rala.train import train
 from rala.utils import show_kitty
 
@@ -53,7 +52,9 @@ def log_lik_fn(y_pred: jax.Array, y_true: jax.Array, model: MLP[ExtraParams]):
     return loglik.sum()
 
 
-def log_prior_fn(model: MLP[ExtraParams], sigma_p: float = 1):
+def log_prior_fn(
+    model: MLP[ExtraParams], sigma_p: float = 1, tau_p: float = 1
+):
     # We only want to regularize 'Param' types (weights/biases), not 'BatchStat'
     params = nnx.state(model, nnx.Param)
 
@@ -68,8 +69,8 @@ def log_prior_fn(model: MLP[ExtraParams], sigma_p: float = 1):
     )
     log_prior = (
         -0.5 * (1 / sigma_p**2) * l2_norm
-        # Improper prior over the observational variance.
-        - model.extra_params.log_sigma
+        # log-normal prior over the observational variance
+        - 0.5 * (1 / tau_p**2) * model.extra_params.log_sigma**2
     )
 
     return log_prior
@@ -103,6 +104,7 @@ def main(
     num_samples: int = 1000,
     seed: int = 42,
     method: LaplaceMethod = LaplaceMethod.STANDARD,
+    last_layer: bool = False,
 ):
 
     match dataset:
@@ -112,7 +114,12 @@ def main(
     extra_params = ExtraParams(log_sigma=-1.0)
 
     rngs = nnx.Rngs(seed)
-    model = MLP(X.shape[1], dmid, 1, extra_params=extra_params, rngs=rngs)
+    if last_layer:
+        model = MLPLastLayer(
+            X.shape[1], dmid, 1, extra_params=extra_params, rngs=rngs
+        )
+    else:
+        model = MLP(X.shape[1], dmid, 1, extra_params=extra_params, rngs=rngs)
 
     # Find the MAP (minimize the negative log posterior)
     def loss_fn(y_pred: jax.Array, y: jax.Array, model: MLP[ExtraParams]):

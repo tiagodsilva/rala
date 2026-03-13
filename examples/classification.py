@@ -9,7 +9,7 @@ from flax.nnx.graph import GraphDef
 from sklearn.datasets import make_classification
 
 from rala.laplace import LaplaceMethod, laplace_approximation
-from rala.models import MLP, reconstruct_model
+from rala.models import MLP, MLPLastLayer
 from rala.train import split, train
 
 app = typer.Typer(pretty_exceptions_enable=False)
@@ -31,16 +31,6 @@ def acc(model: MLP, X: jax.Array, y: jax.Array):
 @partial(jax.vmap, in_axes=(0, None, None), out_axes=0)
 def pm(samples: jax.Array, graphdef: GraphDef, X: jax.Array):
     model = nnx.merge(graphdef, samples)
-    logits = model(X)
-    logits = nnx.log_softmax(logits, axis=1)
-    return logits
-
-
-@partial(jax.vmap, in_axes=(0, None, None), out_axes=0)
-def pm_from_last_layer(
-    samples_layer: jax.Array, model: jax.Array, X: jax.Array
-):
-    model = reconstruct_model(samples_layer, model)
     logits = model(X)
     logits = nnx.log_softmax(logits, axis=1)
     return logits
@@ -74,15 +64,6 @@ def log_p(model: nnx.Module, X: jax.Array, y: jax.Array, sigma_p: float = 5):
     return (log_likelihood + log_prior).sum()
 
 
-@jax.jit
-def log_p_from_last_layer(
-    last_layer: nnx.Module, model: nnx.Module, X: jax.Array, y: jax.Array
-):
-    last_layer_state = nnx.state(last_layer)
-    model_from_layer = reconstruct_model(last_layer_state, model)
-    return log_p(model_from_layer, X, y)
-
-
 @app.command()
 def main(
     size: int = 1000,
@@ -94,6 +75,7 @@ def main(
     num_samples: int = 512,
     seed: int = 42,
     method: LaplaceMethod = LaplaceMethod.STANDARD,
+    last_layer: bool = False,
 ):
     X, y = make_classification(
         n_samples=size, n_features=feat, n_classes=classes, random_state=seed
@@ -102,7 +84,10 @@ def main(
     rngs = nnx.Rngs(seed)
     X_train, y_train, X_test, y_test = split(X, y, key=rngs())
 
-    model = MLP(feat, dmid, classes, rngs=rngs)
+    if last_layer:
+        model = MLPLastLayer(feat, dmid, classes, rngs=rngs)
+    else:
+        model = MLP(feat, dmid, classes, rngs=rngs)
 
     model, _, _ = train(
         model, epochs, X_train, y_train, loss_fn, batch_size, rngs()
@@ -112,24 +97,6 @@ def main(
     jax.debug.print("{}", acc(model, X_test, y_test))
 
     key1, key2 = jax.random.split(rngs(), 2)
-
-    if isinstance(model, MLP):
-        # Compute Laplace approximation for the last layer
-        samples_layer, _, _ = laplace_approximation(
-            partial(log_p_from_last_layer, model=model, X=X_train, y=y_train),
-            model.linear_out,
-            key1,
-            num_samples=num_samples,
-            method=method,
-        )
-
-        # Compute the accuracy based on the Laplace approximation for the last layer
-        jax.debug.print(
-            "{}",
-            acc_from_pm(
-                pm_from_last_layer(samples_layer, model, X_test), y_test
-            ),
-        )
 
     samples, graphdef, _ = laplace_approximation(
         partial(log_p, X=X_train, y=y_train),
