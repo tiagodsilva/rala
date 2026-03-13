@@ -2,7 +2,9 @@ from functools import partial
 
 import flax.nnx as nnx
 import jax
+import jax.flatten_util as flatten_util
 import jax.numpy as jnp
+import jax.scipy.optimize as jso
 import optax
 import tqdm
 
@@ -25,9 +27,9 @@ def split(X: jax.Array, *ys: jax.Array, p: float = 0.7, key: jax.Array):
 
 def create_opt(
     model: nnx.Module,
-    lr: 1e-3,
+    lr: float = 1e-3,
     should_clip: bool = False,
-    base: optax.GradientTransformation = optax.contrib.muon,
+    base: optax.GradientTransformation = optax.sgd,
 ):
 
     params = nnx.state(model, nnx.Any(nnx.Param, ExtraParamsWrapper))
@@ -42,7 +44,7 @@ def create_opt(
     param_labels = nnx.map_state(label_params, params)
 
     clip_default = (
-        optax.clip_by_global_norm(1.0) if should_clip else optax.identity()
+        optax.clip_by_global_norm(10.0) if should_clip else optax.identity()
     )
     tx = optax.multi_transform(
         {
@@ -61,12 +63,22 @@ def create_opt(
 
 def make_indices(size: int, batch_size: int, key: jax.Array):
     all_samples = jnp.arange(size)
-    # We arbitrarily prune `all_samples` to ensure its size is a multiple of batch_size
     key, subkey = jax.random.split(key, 2)
     all_samples_shuffled = jax.random.permutation(subkey, all_samples)
     n_batches = size // batch_size
-    all_samples_shuffled = all_samples_shuffled[: n_batches * batch_size]
-    return all_samples_shuffled.reshape((n_batches, batch_size)), key
+    size_in_batches = n_batches * batch_size
+    size_in_excess = size - size_in_batches
+
+    samples_per_index = all_samples_shuffled[:size_in_batches]
+    if size_in_excess > 0:
+        samples_not_included = all_samples_shuffled[size_in_batches:]
+        extra_samples = all_samples_shuffled[: batch_size - size_in_excess]
+        extra_samples = jnp.hstack([samples_not_included, extra_samples])
+        samples_per_index = jnp.hstack([samples_per_index, extra_samples])
+
+    return samples_per_index.reshape(
+        (n_batches + (size_in_excess > 0), batch_size)
+    ), key
 
 
 def update(
@@ -89,7 +101,11 @@ def update(
     )(model)
     opt.update(model, grads)
 
-    return (model, opt, curr_loss + loss), None
+    # Compute the L2 norm of the gradients
+    grads_norm = jax.tree_util.tree_reduce(
+        lambda acc, p: acc + jnp.sum(p**2), grads, initializer=0.0
+    )
+    return (model, opt, curr_loss + loss), grads_norm
 
 
 @partial(nnx.jit, static_argnames=("loss_fn",))
@@ -103,14 +119,14 @@ def train_step(
     opt: nnx.Optimizer,
 ):
     # Evaluate the model
-    (model, opt, loss), _ = jax.lax.scan(
+    (model, opt, loss), grads_norm = jax.lax.scan(
         f=partial(update, X=X, y=y, loss_fn=loss_fn),
         xs=indices,
         init=(model, opt, jnp.array(0.0)),
         length=len(indices),
     )
 
-    return model, loss / len(indices), key
+    return model, grads_norm.mean(), loss / len(indices), key
 
 
 def train(
@@ -126,13 +142,44 @@ def train(
 ):
     opt = create_opt(model, lr=lr, should_clip=should_clip)
 
-    # Get the data indices
-    indices, key = make_indices(X.shape[0], batch_size, key)
-
     losses = []
     for _ in (pbar := tqdm.trange(epochs)):
-        model, loss, key = train_step(model, X, y, indices, loss_fn, key, opt)
-        pbar.set_postfix(loss=loss)
+        indices, key = make_indices(X.shape[0], batch_size, key)
+        model, grads_norm, loss, key = train_step(
+            model, X, y, indices, loss_fn, key, opt
+        )
+        pbar.set_postfix(loss=f"{loss:.2e}", grads_norm=f"{grads_norm:.2e}")
         losses.append(loss)
 
     return model, losses, key
+
+
+def train_newton(
+    model: nnx.Module,
+    X: jax.Array,
+    y: jax.Array,
+    loss_fn: callable,
+    max_iter: int = 1000,
+):
+    graphdef, params, other_state = nnx.split(
+        model, nnx.Any(nnx.Param, ExtraParamsWrapper), ...
+    )
+    flat_params, unravel = flatten_util.ravel_pytree(params)
+
+    def loss_flat(flat_p: jax.Array) -> jax.Array:
+        params_ = unravel(flat_p)
+        model_ = nnx.merge(graphdef, params_, other_state)
+        y_pred = model_(X)
+        return loss_fn(y_pred, y, model_)
+
+    result = jso.minimize(
+        fun=loss_flat,
+        x0=flat_params,
+        method="BFGS",  # This is the only method available at jso.minimize.
+        options={"maxiter": max_iter},
+    )
+
+    jax.debug.print("{} {}", result.status, result.nit)
+    opt_params = unravel(result.x)
+    trained_model = nnx.merge(graphdef, opt_params, other_state)
+    return trained_model, result

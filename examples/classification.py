@@ -89,19 +89,17 @@ def main(
     else:
         model = MLP(feat, dmid, classes, rngs=rngs)
 
-    model, _, _ = train(
+    model, _, key = train(
         model, epochs, X_train, y_train, loss_fn, batch_size, rngs()
     )
 
     # Compute accuracy on the test set
     jax.debug.print("{}", acc(model, X_test, y_test))
 
-    key1, key2 = jax.random.split(rngs(), 2)
-
     samples, graphdef, _ = laplace_approximation(
         partial(log_p, X=X_train, y=y_train),
         model,
-        key2,
+        key,
         num_samples=num_samples,
         method=method,
     )

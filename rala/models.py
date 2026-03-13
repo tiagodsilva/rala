@@ -4,7 +4,7 @@ import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 
-ExtraParamsType = TypeVar("ExtraParams", bound=nnx.Variable)
+ExtraParamsType = TypeVar("ExtraParamsType", bound=nnx.Variable)
 
 
 class ExtraParamsWrapper(nnx.Variable):
@@ -19,9 +19,10 @@ def forward_modules(x: jax.Array, layer: nnx.Module):
     return y, None
 
 
-def forward_weights(x: jax.Array, layer: jax.Array):
+def forward_weights(x: jax.Array, layer: tuple[jax.Array, jax.Array]):
+    weights, bias = layer
     y = nnx.tanh(x)  # (b, dmid)
-    y = jnp.dot(y, layer)  # (b, dmid)
+    y = jnp.dot(y, weights) + bias[None, ...]  # (b, dmid)
     return y, None
 
 
@@ -89,12 +90,8 @@ class MLPLastLayer(nnx.Module, Generic[ExtraParamsType]):
             ExtraParamsWrapper(extra_params) if extra_params else None
         )
 
+        # JAX standard initializer.
         initializer = nnx.initializers.lecun_uniform()
-
-        # Create the initial layer
-        self.linear_in = ExtraParamsWrapper(
-            initializer(rngs(), shape=(self.din, self.dmid))
-        )
 
         @nnx.split_rngs(splits=nlayers)
         @nnx.vmap(in_axes=(0,), out_axes=0)
@@ -103,15 +100,27 @@ class MLPLastLayer(nnx.Module, Generic[ExtraParamsType]):
                 initializer(rngs(), (self.dmid, self.dmid))
             )
 
+        # Create the layers
+        self.linear_in = ExtraParamsWrapper(
+            initializer(rngs(), shape=(self.din, self.dmid))
+        )
         self.layers = create_layer(rngs)
         self.linear_out = nnx.Linear(dmid, dout, rngs=rngs)
 
+        @nnx.split_rngs(splits=nlayers)
+        @nnx.vmap(in_axes=(0,), out_axes=0)
+        def create_biases(_: nnx.Rngs):
+            return ExtraParamsWrapper(jnp.zeros((self.dmid,)))
+
+        self.b_in = ExtraParamsWrapper(jnp.zeros((self.dmid,)))
+        self.b_layers = create_biases(rngs)
+
     def __call__(self, x: jax.Array):
-        y = jnp.dot(x, self.linear_in)  # (b, dmid)
+        y = jnp.dot(x, self.linear_in) + self.b_in[None, ...]  # (b, dmid)
         y, _ = jax.lax.scan(
             f=forward_weights,
             init=y,
-            xs=self.layers,
+            xs=(self.layers, self.b_layers),
             length=self.nlayers,
         )
         y = self.linear_out(y)

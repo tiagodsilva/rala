@@ -1,6 +1,7 @@
 import pathlib
 from enum import Enum
 from functools import partial
+from typing import NamedTuple
 
 import flax.nnx as nnx
 import flax.struct as struct
@@ -11,7 +12,7 @@ import typer
 
 from rala.laplace import LaplaceMethod, laplace_approximation
 from rala.models import MLP, ExtraParamsWrapper, MLPLastLayer
-from rala.train import train
+from rala.train import train, train_newton
 from rala.utils import show_kitty
 
 app = typer.Typer(pretty_exceptions_enable=False)
@@ -37,6 +38,11 @@ def make_snelson_data():
     X = data[:, [0]]  # (N, 1)
     y = data[:, 1]  # (N,)
 
+    X_mean, X_std = X.mean(0), X.std(0)
+    y_mean, y_std = y.mean(), y.std()
+    X = (X - X_mean) / X_std
+    y = (y - y_mean) / y_std
+
     return X, y
 
 
@@ -53,7 +59,7 @@ def log_lik_fn(y_pred: jax.Array, y_true: jax.Array, model: MLP[ExtraParams]):
 
 
 def log_prior_fn(
-    model: MLP[ExtraParams], sigma_p: float = 1, tau_p: float = 1
+    model: MLP[ExtraParams], sigma_p: float = 10, tau_p: float = 10
 ):
     # We only want to regularize 'Param' types (weights/biases), not 'BatchStat'
     params = nnx.state(model, nnx.Param)
@@ -88,7 +94,7 @@ def log_p(model: nnx.Module, X: jax.Array, y: jax.Array):
 
 def plot_model_1d(model: MLP[ExtraParams], x_obs: jax.Array):
     # Create a grid to plot
-    x_grid = jnp.linspace(x_obs.min() - 2, x_obs.max() + 2, num=200)
+    x_grid = jnp.linspace(x_obs.min(), x_obs.max(), num=200)
     x_grid = jnp.expand_dims(x_grid, axis=1)
     y_pred = model(x_grid)
 
@@ -99,7 +105,7 @@ def plot_model_1d(model: MLP[ExtraParams], x_obs: jax.Array):
 def main(
     dmid: int = 10,
     epochs: int = 50,
-    batch_size: int = 64,
+    batch_size: int = 128,
     dataset: DataEnum = DataEnum.SNELSON,
     num_samples: int = 1000,
     seed: int = 42,
@@ -111,7 +117,7 @@ def main(
         case DataEnum.SNELSON:
             X, y = make_snelson_data()
 
-    extra_params = ExtraParams(log_sigma=-1.0)
+    extra_params = ExtraParams(log_sigma=jnp.log(y.std()))
 
     rngs = nnx.Rngs(seed)
     if last_layer:
@@ -122,34 +128,43 @@ def main(
         model = MLP(X.shape[1], dmid, 1, extra_params=extra_params, rngs=rngs)
 
     # Find the MAP (minimize the negative log posterior)
+    total_samples = X.shape[0]
+
     def loss_fn(y_pred: jax.Array, y: jax.Array, model: MLP[ExtraParams]):
         log_lik = log_lik_fn(y_pred, y, model)
         log_prior = log_prior_fn(model)
+        log_lik = log_lik * (total_samples / y_pred.shape[0])
+
         return -(log_lik + log_prior)
 
-    model, _, _ = train(model, epochs, X, y, loss_fn, batch_size, rngs())
+    model, _, _ = train(
+        model, epochs, X, y, loss_fn, batch_size, rngs(), should_clip=True
+    )
+    model, _ = train_newton(model, X, y, loss_fn, max_iter=epochs)
 
     jax.debug.print("{}", model.extra_params.log_sigma)
     _, subkey = jax.random.split(rngs(), 2)
 
     extra_state = nnx.state(model, ExtraParamsWrapper)
 
-    samples, graphdef, _ = laplace_approximation(
-        partial(log_p, X=X, y=y),
-        model,
-        subkey,
-        num_samples=num_samples,
-        method=method,
-        extra_state=extra_state,
-    )
+    # samples, graphdef, _ = laplace_approximation(
+    #     partial(log_p, X=X, y=y),
+    #     model,
+    #     subkey,
+    #     num_samples=num_samples,
+    #     method=method,
+    #     extra_state=extra_state,
+    # )
 
     match dataset:
         case DataEnum.SNELSON:
             x_obs = X.squeeze(axis=1)
-            for i in range(num_samples):
-                sample = jax.tree_util.tree_map(lambda x: x[i], samples)
-                model_from_sample = nnx.merge(graphdef, sample, extra_state)
-                plot_model_1d(model_from_sample, x_obs)
+            plot_model_1d(model, x_obs)
+
+            # for i in range(num_samples):
+            #     sample = jax.tree_util.tree_map(lambda x: x[i], samples)
+            #     model_from_sample = nnx.merge(graphdef, sample, extra_state)
+            #     plot_model_1d(model, x_obs)
             plt.scatter(x_obs, y)
             show_kitty()
 
