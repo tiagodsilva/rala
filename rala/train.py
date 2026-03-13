@@ -2,9 +2,7 @@ from functools import partial
 
 import flax.nnx as nnx
 import jax
-import jax.flatten_util as flatten_util
 import jax.numpy as jnp
-import jax.scipy.optimize as jso
 import optax
 import tqdm
 
