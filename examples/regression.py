@@ -1,7 +1,6 @@
 import pathlib
 from enum import Enum
 from functools import partial
-from typing import NamedTuple
 
 import flax.nnx as nnx
 import flax.struct as struct
@@ -15,6 +14,7 @@ from rala.models import MLP, ExtraParamsWrapper, MLPLastLayer
 from rala.train import train, train_newton
 from rala.utils import show_kitty
 
+# python examples/regression.py --epochs 15000 --last-layer --seed 84 --batch-size 200
 app = typer.Typer(pretty_exceptions_enable=False)
 
 HERE = pathlib.Path(__file__).parent
@@ -147,24 +147,22 @@ def main(
 
     extra_state = nnx.state(model, ExtraParamsWrapper)
 
-    # samples, graphdef, _ = laplace_approximation(
-    #     partial(log_p, X=X, y=y),
-    #     model,
-    #     subkey,
-    #     num_samples=num_samples,
-    #     method=method,
-    #     extra_state=extra_state,
-    # )
+    samples, graphdef, _ = laplace_approximation(
+        partial(log_p, X=X, y=y),
+        model,
+        subkey,
+        num_samples=num_samples,
+        method=method,
+        extra_state=extra_state,
+    )
 
     match dataset:
         case DataEnum.SNELSON:
             x_obs = X.squeeze(axis=1)
-            plot_model_1d(model, x_obs)
-
-            # for i in range(num_samples):
-            #     sample = jax.tree_util.tree_map(lambda x: x[i], samples)
-            #     model_from_sample = nnx.merge(graphdef, sample, extra_state)
-            #     plot_model_1d(model, x_obs)
+            for i in range(num_samples):
+                sample = jax.tree_util.tree_map(lambda x: x[i], samples)
+                model_from_sample = nnx.merge(graphdef, sample, extra_state)
+                plot_model_1d(model_from_sample, x_obs)
             plt.scatter(x_obs, y)
             show_kitty()
 
