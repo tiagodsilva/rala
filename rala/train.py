@@ -28,7 +28,6 @@ def create_opt(
     lr: 1e-3,
     should_clip: bool = False,
     base: optax.GradientTransformation = optax.contrib.muon,
-    weight_decay: float = 1e-4,
 ):
 
     params = nnx.state(model, nnx.Any(nnx.Param, ExtraParamsWrapper))
