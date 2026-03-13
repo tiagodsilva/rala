@@ -88,7 +88,7 @@ def log_p(model: nnx.Module, X: jax.Array, y: jax.Array):
 
 def plot_model_1d(model: MLP[ExtraParams], x_obs: jax.Array):
     # Create a grid to plot
-    x_grid = jnp.linspace(x_obs.min() - 1, x_obs.max() + 1, num=100)
+    x_grid = jnp.linspace(x_obs.min() - 2, x_obs.max() + 2, num=200)
     x_grid = jnp.expand_dims(x_grid, axis=1)
     y_pred = model(x_grid)
 
@@ -97,7 +97,7 @@ def plot_model_1d(model: MLP[ExtraParams], x_obs: jax.Array):
 
 @app.command()
 def main(
-    dmid: int = 32,
+    dmid: int = 10,
     epochs: int = 50,
     batch_size: int = 64,
     dataset: DataEnum = DataEnum.SNELSON,
