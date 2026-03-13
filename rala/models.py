@@ -3,17 +3,26 @@ from typing import Generic, Optional, TypeVar
 import flax.nnx as nnx
 import flax.struct as struct
 import jax
+import jax.numpy as jnp
 
 ExtraParamsType = TypeVar("ExtraParams", bound=nnx.Variable)
 
 
-class ExtraParamWrapper(nnx.Param):
+class ExtraParamsWrapper(nnx.Variable):
+    # Contains optimizable variables which are not used in the Laplace approximation
+    # (e.g., variance, or internal layers of an MLP for certain models)
     pass
 
 
-def forward(x: jax.Array, layer: nnx.Module):
-    y = nnx.leaky_relu(x)
+def forward_modules(x: jax.Array, layer: nnx.Module):
+    y = nnx.tanh(x)
     y = layer(y)
+    return y, None
+
+
+def forward_weights(x: jax.Array, layer: jax.Array):
+    y = nnx.tanh(x)  # (b, dmid)
+    y = jnp.dot(y, layer)  # (b, dmid)
     return y, None
 
 
@@ -36,7 +45,7 @@ class MLP(nnx.Module, Generic[ExtraParamsType]):
         self.dout = dout
         self.nlayers = nlayers
         self.extra_params = (
-            ExtraParamWrapper(extra_params) if extra_params else None
+            ExtraParamsWrapper(extra_params) if extra_params else None
         )
 
         @nnx.split_rngs(splits=nlayers)
@@ -51,7 +60,57 @@ class MLP(nnx.Module, Generic[ExtraParamsType]):
     def __call__(self, x: jax.Array):
         y = self.linear_in(x)
         y, _ = jax.lax.scan(
-            f=forward,
+            f=forward_modules,
+            init=y,
+            xs=self.layers,
+            length=self.nlayers,
+        )
+        y = self.linear_out(y)
+        return y
+
+
+class MLPLastLayer(nnx.Module, Generic[ExtraParamsType]):
+    extra_params: Optional[ExtraParamsType] = None
+
+    def __init__(
+        self,
+        din: int,
+        dmid: int,
+        dout: int,
+        nlayers: int = 1,
+        extra_params: Optional[ExtraParamsType] = None,
+        *,
+        rngs: nnx.Rngs,
+    ):
+        self.din = din
+        self.dmid = dmid if nlayers > 0 else din
+        self.dout = dout
+        self.nlayers = nlayers
+        self.extra_params = (
+            ExtraParamsWrapper(extra_params) if extra_params else None
+        )
+
+        initializer = nnx.initializers.lecun_uniform()
+
+        # Create the initial layer
+        self.linear_in = ExtraParamsWrapper(
+            initializer(rngs(), shape=(self.din, self.dmid))
+        )
+
+        @nnx.split_rngs(splits=nlayers)
+        @nnx.vmap(in_axes=(0,), out_axes=0)
+        def create_layer(rngs: nnx.Rngs):
+            return ExtraParamsWrapper(
+                initializer(rngs(), (self.dmid, self.dmid))
+            )
+
+        self.layers = create_layer(rngs)
+        self.linear_out = nnx.Linear(dmid, dout, rngs=rngs)
+
+    def __call__(self, x: jax.Array):
+        y = jnp.dot(x, self.linear_in)  # (b, dmid)
+        y, _ = jax.lax.scan(
+            f=forward_weights,
             init=y,
             xs=self.layers,
             length=self.nlayers,

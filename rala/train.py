@@ -6,6 +6,8 @@ import jax.numpy as jnp
 import optax
 import tqdm
 
+from rala.models import ExtraParamsWrapper
+
 
 def split(X: jax.Array, *ys: jax.Array, p: float = 0.7, key: jax.Array):
     size = len(X)
@@ -29,7 +31,7 @@ def create_opt(
     weight_decay: float = 1e-4,
 ):
 
-    params = nnx.state(model, nnx.Param)
+    params = nnx.state(model, nnx.Any(nnx.Param, ExtraParamsWrapper))
 
     # JAX's way of labeling parameters, which allows different optimizers
     # to be used for different parameter groups. Quite unreadable.
@@ -55,7 +57,9 @@ def create_opt(
         param_labels,
     )
 
-    return nnx.Optimizer(model, tx=tx, wrt=nnx.Param)
+    return nnx.Optimizer(
+        model, tx=tx, wrt=nnx.Any(nnx.Param, ExtraParamsWrapper)
+    )
 
 
 def make_indices(size: int, batch_size: int, key: jax.Array):
@@ -83,7 +87,9 @@ def update(
         y_pred = model(X_batch)
         return loss_fn(y_pred, y_batch, model)
 
-    loss, grads = nnx.value_and_grad(step, argnums=0)(model)
+    loss, grads = nnx.value_and_grad(
+        step, argnums=nnx.DiffState(0, nnx.Any(nnx.Param, ExtraParamsWrapper))
+    )(model)
     opt.update(model, grads)
 
     return (model, opt, curr_loss + loss), None

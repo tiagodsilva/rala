@@ -10,7 +10,8 @@ import matplotlib.pyplot as plt
 import typer
 
 from rala.laplace import LaplaceMethod, laplace_approximation
-from rala.models import MLP, ExtraParamWrapper
+from rala.models import ExtraParamsWrapper
+from rala.models import MLPLastLayer as MLP
 from rala.train import train
 from rala.utils import show_kitty
 
@@ -52,17 +53,24 @@ def log_lik_fn(y_pred: jax.Array, y_true: jax.Array, model: MLP[ExtraParams]):
     return loglik.sum()
 
 
-def log_prior_fn(model: MLP[ExtraParams], sigma_p: float = 5):
+def log_prior_fn(model: MLP[ExtraParams], sigma_p: float = 1):
     # We only want to regularize 'Param' types (weights/biases), not 'BatchStat'
-    params = nnx.state(model, nnx.Param, nnx.Not(ExtraParamWrapper))
+    params = nnx.state(model, nnx.Param)
 
     # Compute the prior distribution
+    def acc_fn(acc: jax.Array, p: jax.Array):
+        return acc + jnp.sum(p**2)
+
     l2_norm = jax.tree_util.tree_reduce(
-        lambda acc, p: acc + jnp.sum(p**2),
+        acc_fn,
         params,
         initializer=0.0,
     )
-    log_prior = -0.5 * (1 / sigma_p**2) * l2_norm
+    log_prior = (
+        -0.5 * (1 / sigma_p**2) * l2_norm
+        # Improper prior over the observational variance.
+        - model.extra_params.log_sigma
+    )
 
     return log_prior
 
@@ -88,7 +96,7 @@ def plot_model_1d(model: MLP[ExtraParams], x_obs: jax.Array):
 
 @app.command()
 def main(
-    dmid: int = 32,
+    dmid: int = 10,
     epochs: int = 50,
     batch_size: int = 64,
     dataset: DataEnum = DataEnum.SNELSON,
@@ -115,32 +123,17 @@ def main(
     model, _, _ = train(model, epochs, X, y, loss_fn, batch_size, rngs())
 
     jax.debug.print("{}", model.extra_params.log_sigma)
-    key1, key2 = jax.random.split(rngs(), 2)
+    _, subkey = jax.random.split(rngs(), 2)
 
-    # if isinstance(model, MLP):
-    #     # Compute Laplace approximation for the last layer
-    #     samples_layer, _, _ = laplace_approximation(
-    #         partial(log_p_from_last_layer, model=model, X=X_train, y=y_train),
-    #         model.linear_out,
-    #         key1,
-    #         num_samples=num_samples,
-    #         method=method,
-    #     )
-
-    #     # Compute the accuracy based on the Laplace approximation for the last layer
-    #     jax.debug.print(
-    #         "{}",
-    #         acc_from_pm(
-    #             pm_from_last_layer(samples_layer, model, X_test), y_test
-    #         ),
-    #     )
+    extra_state = nnx.state(model, ExtraParamsWrapper)
 
     samples, graphdef, _ = laplace_approximation(
         partial(log_p, X=X, y=y),
         model,
-        key2,
+        subkey,
         num_samples=num_samples,
         method=method,
+        extra_state=extra_state,
     )
 
     match dataset:
@@ -148,8 +141,8 @@ def main(
             x_obs = X.squeeze(axis=1)
             for i in range(num_samples):
                 sample = jax.tree_util.tree_map(lambda x: x[i], samples)
-                model_from_sample = nnx.merge(graphdef, sample)
-                plot_model_1d(model, x_obs)
+                model_from_sample = nnx.merge(graphdef, sample, extra_state)
+                plot_model_1d(model_from_sample, x_obs)
             plt.scatter(x_obs, y)
             show_kitty()
 

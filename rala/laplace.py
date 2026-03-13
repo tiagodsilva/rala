@@ -6,7 +6,6 @@ import flax.nnx as nnx
 import flax.struct as struct
 import jax
 import jax.numpy as jnp
-import jax.scipy as jsp
 import jax.tree_util as tree_util
 from diffrax import Dopri5, ODETerm, PIDController, diffeqsolve
 from jax.flatten_util import ravel_pytree
@@ -23,19 +22,28 @@ class LaplaceMethod(Enum):
     OPT = "opt"  # Optimization-based Laplace approximation.
 
 
+def spectral_decomp(m: jax.Array, min: float = 1e-6, max: float = 1e6):
+    # Ensure the eigenvalues of the matrix m are in between `min` and `max`
+    out = jnp.linalg.eigh(m)
+
+    # Clip the eigenvalues, and compute their square root
+    eig_values = jnp.clip(out.eigenvalues, min=min, max=max)  # (n,)
+    eig_values_sqrt = 1 / jnp.sqrt(eig_values)  # (d,)
+    # Return the spectrally clamped Cholesky-like decomposition
+    return out.eigenvectors @ jnp.diag(eig_values_sqrt)
+
+
 @jax.jit
 @partial(jax.vmap, in_axes=(0, None, None), out_axes=0)
 def sample_from_gaussian(
-    key: jax.Array,
-    mean_tree: struct.PyTreeNode,
-    cov_L_tree: struct.PyTreeNode,
+    key: jax.Array, mean_tree: struct.PyTreeNode, cov_L_tree: struct.PyTreeNode
 ):
     def sample_leaf(key: jax.Array, mean: jax.Array, cov_L: jax.Array):
         z = jax.random.normal(key, mean.shape)
         flat_mean = mean.ravel()
-        # jnp.linalg.cholesky return L s.t. H = LL^{T}
-        # so L^{T} x = z implies x = L^{-T} z and x ~ N(0, L^{-T} L^{-1}) = N(0, (L L^{T})^{-1})
-        delta = jsp.linalg.solve_triangular(cov_L, z, lower=True, trans=1)
+        # We compute cov_L from the spectral decomposition (see spectral_decomp).
+        # If z ~ N(0, I), cov_L @ z ~ N(0, cov_L @ cov_L.T)
+        delta = cov_L @ z
         return (flat_mean + delta).reshape(mean.shape)
 
     # Convert keys into the structure of `mean_tree`
@@ -179,40 +187,49 @@ def laplace_approximation(
     metric_fn: callable = None,
     rwmc_refine: bool = False,
     hmc_refine: bool = False,
+    extra_state: nnx.State = nnx.State({}),
 ) -> tuple[nnx.State, nnx.GraphDef, jax.Array]:
-    state = nnx.state(model)
+    param_state = nnx.state(model, nnx.Param)
+
     graphdef = nnx.graphdef(model)
-    theta_map, unravel = ravel_pytree(state)
+    theta_map, unravel = ravel_pytree(param_state)
 
     @jax.jit
-    def neg_log_p_flat(theta):
+    def log_p_flat(theta, extra_state: struct.PyTreeNode):
         state_unflat = unravel(theta)
-        model_reconstructed = nnx.merge(graphdef, state_unflat)
-        return -logp_fn(model_reconstructed)
+        model_reconstructed = nnx.merge(graphdef, state_unflat, extra_state)
+        return logp_fn(model_reconstructed)
 
-    hessian = jax.hessian(neg_log_p_flat)(theta_map)
-    hessian_L = jnp.linalg.cholesky(hessian)
-    dim, _ = hessian.shape
+    @jax.jit
+    def neg_log_p_flat(theta, extra_state: struct.PyTreeNode):
+        return -log_p_flat(theta, extra_state)
+
+    (dim,) = theta_map.shape
+    hessian = jax.hessian(partial(neg_log_p_flat, extra_state=extra_state))(
+        theta_map
+    )
+    hessian_L = spectral_decomp(hessian)
 
     key, *keys = jax.random.split(key, num_samples + 1)
     keys = jnp.array(keys)
 
     samples = sample_from_gaussian(keys, theta_map, hessian_L)
 
-    @jax.jit
-    def log_p_flat(theta):
-        state_unflat = unravel(theta)
-        model_reconstructed = nnx.merge(graphdef, state_unflat)
-        return logp_fn(model_reconstructed)
-
     match method:
         case LaplaceMethod.RIEMANN:
             # loss function = negative log likelihood
-            samples = rexpmap(samples, theta_map, neg_log_p_flat, dim)
+            samples = rexpmap(
+                samples,
+                theta_map,
+                partial(neg_log_p_flat, extra_state=extra_state),
+                dim,
+            )
         case LaplaceMethod.MONGE:
 
             def metric_fn(theta):
-                grad_log_p = jax.grad(log_p_flat)(theta)
+                grad_log_p = jax.grad(
+                    partial(log_p_flat, extra_state=extra_state)
+                )(theta)
                 return jnp.eye(dim) + jnp.outer(grad_log_p, grad_log_p)
 
             samples = fexpmap(samples, theta_map, metric_fn, dim)
