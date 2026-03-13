@@ -207,6 +207,7 @@ def find_map(
         )
         return optax.apply_updates(theta, updates), opt_state, loss, grad
 
+    # This implements JAX's stateless computations.
     for _ in tqdm.trange(max_iterations):
         theta, opt_state, _, grad = step(theta, opt_state)
         grad_norm = jnp.max(jnp.abs(grad))
