@@ -96,7 +96,7 @@ def plot_model_1d(model: MLP[ExtraParams], x_obs: jax.Array):
 
 @app.command()
 def main(
-    dmid: int = 10,
+    dmid: int = 32,
     epochs: int = 50,
     batch_size: int = 64,
     dataset: DataEnum = DataEnum.SNELSON,
