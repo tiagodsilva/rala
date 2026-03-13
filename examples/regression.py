@@ -11,7 +11,7 @@ import typer
 
 from rala.laplace import LaplaceMethod, laplace_approximation
 from rala.models import MLP, ExtraParamsWrapper, MLPLastLayer
-from rala.train import train, train_newton
+from rala.train import train
 from rala.utils import show_kitty
 
 # python examples/regression.py --epochs 15000 --last-layer --seed 84 --batch-size 200
@@ -141,7 +141,6 @@ def main(
     model, _, _ = train(
         model, epochs, X, y, loss_fn, batch_size, rngs(), should_clip=True
     )
-    model, _ = train_newton(model, X, y, loss_fn, max_iter=epochs)
 
     jax.debug.print("{}", model.extra_params.log_sigma)
     _, subkey = jax.random.split(rngs(), 2)
@@ -156,6 +155,7 @@ def main(
         method=method,
         extra_state=extra_state,
         rwmc_refine=rwmc,
+        min_eigenvalue=3,
     )
 
     match dataset:

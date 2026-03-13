@@ -152,34 +152,3 @@ def train(
         losses.append(loss)
 
     return model, losses, key
-
-
-def train_newton(
-    model: nnx.Module,
-    X: jax.Array,
-    y: jax.Array,
-    loss_fn: callable,
-    max_iter: int = 1000,
-):
-    graphdef, params, other_state = nnx.split(
-        model, nnx.Any(nnx.Param, ExtraParamsWrapper), ...
-    )
-    flat_params, unravel = flatten_util.ravel_pytree(params)
-
-    def loss_flat(flat_p: jax.Array) -> jax.Array:
-        params_ = unravel(flat_p)
-        model_ = nnx.merge(graphdef, params_, other_state)
-        y_pred = model_(X)
-        return loss_fn(y_pred, y, model_)
-
-    result = jso.minimize(
-        fun=loss_flat,
-        x0=flat_params,
-        method="BFGS",  # This is the only method available at jso.minimize.
-        options={"maxiter": max_iter},
-    )
-
-    jax.debug.print("{} {}", result.status, result.nit)
-    opt_params = unravel(result.x)
-    trained_model = nnx.merge(graphdef, opt_params, other_state)
-    return trained_model, result

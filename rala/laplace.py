@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 import jax.tree_util as tree_util
 import optax
+import tqdm
 from diffrax import Dopri5, ODETerm, PIDController, diffeqsolve
 from jax.flatten_util import ravel_pytree
 from jaxhmc.mcmc import HMCConfig, RandomWalkConfig, hmc, random_walk
@@ -182,7 +183,7 @@ def alogmap(
 def find_map(
     neg_log_p_flat: Callable,
     theta_init: jax.Array,
-    max_iterations: int = 10_000,
+    max_iterations: int = 30_000,
     tol: float = 1e-5,
 ) -> jax.Array:
     # The purpose of this function may sound mystical;
@@ -206,7 +207,7 @@ def find_map(
         )
         return optax.apply_updates(theta, updates), opt_state, loss, grad
 
-    for _ in range(max_iterations):
+    for _ in tqdm.trange(max_iterations):
         theta, opt_state, _, grad = step(theta, opt_state)
         grad_norm = jnp.max(jnp.abs(grad))
         if grad_norm < tol:
@@ -225,6 +226,7 @@ def laplace_approximation(
     rwmc_refine: bool = False,
     hmc_refine: bool = False,
     extra_state: nnx.State = nnx.State({}),
+    min_eigenvalue: float = 1e-6,
 ) -> tuple[nnx.State, nnx.GraphDef, jax.Array]:
     param_state = nnx.state(model, nnx.Param)
 
@@ -246,18 +248,11 @@ def laplace_approximation(
         theta_map,  # pre-trained weights as warm start
     )
 
-    grad_at_map = jax.grad(partial(neg_log_p_flat, extra_state=extra_state))(
-        theta_map
-    )
-    print(
-        "max grad", jnp.max(jnp.abs(grad_at_map))
-    )  # should be ~1e-5 or smaller
-
     (dim,) = theta_map.shape
     hessian = jax.hessian(partial(neg_log_p_flat, extra_state=extra_state))(
         theta_map
     )
-    hessian_L = spectral_decomp(hessian)
+    hessian_L = spectral_decomp(hessian, min=min_eigenvalue)
 
     key, *keys = jax.random.split(key, num_samples + 1)
     keys = jnp.array(keys)
