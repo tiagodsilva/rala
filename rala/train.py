@@ -47,9 +47,7 @@ def create_opt(
     )
     tx = optax.multi_transform(
         {
-            "default": optax.chain(
-                clip_default, base(learning_rate=lr, weight_decay=weight_decay)
-            ),
+            "default": optax.chain(clip_default, base(learning_rate=lr)),
             "extra_params": optax.chain(
                 clip_default, optax.sgd(learning_rate=lr, nesterov=True)
             ),
