@@ -38,23 +38,12 @@ def spectral_decomp(m: jax.Array, min: float = 1e-6, max: float = 1e8):
 @jax.jit
 @partial(jax.vmap, in_axes=(0, None, None), out_axes=0)
 def sample_from_gaussian(
-    key: jax.Array, mean_tree: struct.PyTreeNode, cov_L_tree: struct.PyTreeNode
+    key: jax.Array, mean: struct.PyTreeNode, cov_L: struct.PyTreeNode
 ):
-    def sample_leaf(key: jax.Array, mean: jax.Array, cov_L: jax.Array):
-        z = jax.random.normal(key, mean.shape)
-        flat_mean = mean.ravel()
-        # We compute cov_L from the spectral decomposition (see spectral_decomp).
-        # If z ~ N(0, I), cov_L @ z ~ N(0, cov_L @ cov_L.T)
-        delta = cov_L @ z
-        return (flat_mean + delta).reshape(mean.shape)
-
-    # Convert keys into the structure of `mean_tree`
-    treedef = tree_util.tree_structure(mean_tree)
-    keys = jax.random.split(key, treedef.num_leaves)
-    key_tree = tree_util.tree_unflatten(treedef, keys)
-
-    theta = sample_leaf(key_tree, mean_tree, cov_L_tree)
-    return theta
+    z = jax.random.normal(key, mean.shape)
+    flat_mean = mean.ravel()
+    delta = cov_L @ z
+    return (flat_mean + delta).reshape(mean.shape)
 
 
 @partial(jax.jit, static_argnames=("logp_fn_flat", "dim"))

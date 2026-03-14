@@ -148,7 +148,9 @@ class MLPLastLayer(MLP):
             initializer(rngs(), shape=(self.din, self.dmid))
         )
         self.layers = create_layer(rngs)
-        self.linear_out = nnx.Linear(dmid, dout, rngs=rngs)
+        self.linear_out = nnx.Linear(
+            dmid, dout, rngs=rngs, kernel_init=initializer
+        )
 
         @nnx.split_rngs(splits=nlayers)
         @nnx.vmap(in_axes=(0,), out_axes=0)
