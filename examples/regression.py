@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import typer
 
 from rala.laplace import LaplaceMethod, laplace_approximation
-from rala.models import MLP, ExtraParamsWrapper, MLPLastLayer
+from rala.models import MLP, Buffer, ExtraParamsWrapper, MLPLastLayer
 from rala.train import train
 from rala.utils import show_kitty
 
@@ -128,6 +128,8 @@ def main(
     else:
         model = MLP(X.shape[1], dmid, 1, extra_params=extra_params, rngs=rngs)
 
+    model.set_scale(X, y)
+
     # Find the MAP (minimize the negative log posterior)
     total_samples = X.shape[0]
 
@@ -145,7 +147,7 @@ def main(
     jax.debug.print("{}", model.extra_params.log_sigma)
     _, subkey = jax.random.split(rngs(), 2)
 
-    extra_state = nnx.state(model, ExtraParamsWrapper)
+    extra_state = nnx.state(model, nnx.Any(ExtraParamsWrapper, Buffer))
 
     samples, graphdef, _ = laplace_approximation(
         partial(log_p, X=X, y=y),

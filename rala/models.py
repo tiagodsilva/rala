@@ -1,6 +1,8 @@
+from functools import partial
 from typing import Generic, Optional, TypeVar
 
 import flax.nnx as nnx
+import flax.struct as struct
 import jax
 import jax.numpy as jnp
 
@@ -11,6 +13,27 @@ class ExtraParamsWrapper(nnx.Variable):
     # Contains optimizable variables which are not used in the Laplace approximation
     # (e.g., variance, or internal layers of an MLP for certain models)
     pass
+
+
+class Buffer(nnx.Variable):
+    # Non-trainable data.
+    pass
+
+
+@struct.dataclass
+class DataNorm:
+    X_mu: jax.Array
+    X_std: jax.Array
+    y_mu: jax.Array
+    y_std: jax.Array
+
+    @partial(jax.vmap, in_axes=(None, 0), out_axes=0)
+    def norm(self, x: jax.Array):
+        return (x - self.X_mu) / self.X_std
+
+    @partial(jax.vmap, in_axes=(None, 0), out_axes=0)
+    def denorm(self, x: jax.Array):
+        return x * self.y_std + self.y_mu
 
 
 def forward_modules(x: jax.Array, layer: nnx.Module):
@@ -65,7 +88,17 @@ class MLP(nnx.Module, Generic[ExtraParamsType]):
             self.dmid, self.dout, rngs=rngs, kernel_init=initializer
         )
 
+        self.data_norm = Buffer(
+            DataNorm(
+                X_mu=jnp.zeros((din,)),
+                X_std=jnp.ones((din,)),
+                y_mu=jnp.zeros((dout,)),
+                y_std=jnp.ones((dout,)),
+            )
+        )
+
     def __call__(self, x: jax.Array):
+        # x_norm = self.data_norm.norm(x)
         y = self.linear_in(x)
         y, _ = jax.lax.scan(
             f=forward_modules,
@@ -74,7 +107,16 @@ class MLP(nnx.Module, Generic[ExtraParamsType]):
             length=self.nlayers,
         )
         y = self.linear_out(y)
+        # y = self.data_norm.denorm(y)
         return y
+
+    def set_scale(self, X: jax.Array, y: jax.Array):
+        self.data_norm.value = self.data_norm.value.replace(
+            X_mu=X.mean(0),
+            X_std=X.std(0),
+            y_mu=y.mean(0),
+            y_std=y.std(0),
+        )
 
 
 class MLPLastLayer(nnx.Module, Generic[ExtraParamsType]):
@@ -123,8 +165,18 @@ class MLPLastLayer(nnx.Module, Generic[ExtraParamsType]):
         self.b_in = ExtraParamsWrapper(jnp.zeros((self.dmid,)))
         self.b_layers = create_biases(rngs)
 
+        self.data_norm = Buffer(
+            DataNorm(
+                X_mu=jnp.zeros((din,)),
+                X_std=jnp.ones((din,)),
+                y_mu=jnp.zeros((dout,)),
+                y_std=jnp.ones((dout,)),
+            )
+        )
+
     def __call__(self, x: jax.Array):
-        y = jnp.dot(x, self.linear_in) + self.b_in[None, ...]  # (b, dmid)
+        x_norm = self.data_norm.norm(x)
+        y = jnp.dot(x_norm, self.linear_in) + self.b_in[None, ...]  # (b, dmid)
         y, _ = jax.lax.scan(
             f=forward_weights,
             init=y,
@@ -132,7 +184,16 @@ class MLPLastLayer(nnx.Module, Generic[ExtraParamsType]):
             length=self.nlayers,
         )
         y = self.linear_out(y)
+        y = self.data_norm.denorm(y)
         return y
+
+    def set_scale(self, X: jax.Array, y: jax.Array):
+        self.data_norm.value = self.data_norm.value.replace(
+            X_mu=X.mean(0),
+            X_std=X.std(0),
+            y_mu=y.mean(0),
+            y_std=y.std(0),
+        )
 
 
 # General model for a log posterior distribution.
