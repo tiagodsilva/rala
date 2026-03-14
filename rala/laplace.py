@@ -6,7 +6,6 @@ import flax.nnx as nnx
 import flax.struct as struct
 import jax
 import jax.numpy as jnp
-import jax.tree_util as tree_util
 import optax
 import tqdm
 from diffrax import Dopri5, ODETerm, PIDController, diffeqsolve
