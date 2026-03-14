@@ -168,18 +168,6 @@ def fexpmap(
     return solution.ys[-1, :dim]
 
 
-@partial(jax.vmap, in_axes=(0, None, None, None), out_axes=0)
-def alogmap(
-    sample: jax.Array,
-    theta_map: jax.Array,
-    metric_on_map: jax.Array,
-    jacobian_on_map: jax.Array,
-    dim: int,
-):
-    # We first compute the KL divergence between sample and theta_map
-    logm = metric_on_map
-
-
 def find_map(
     neg_log_p_flat: Callable,
     theta_init: jax.Array,
@@ -283,10 +271,6 @@ def laplace_approximation(
                 "`metric_fn` should be provided when `FISHER` is used"
             )
             samples = fexpmap(samples, theta_map, metric_fn, dim)
-        case LaplaceMethod.OPT:
-            # velocity = samples - theta_map
-            # samples = solve(velocity, metric_fn)
-            samples = solve_opt(samples, theta_map, metric_fn, dim)
 
     if rwmc_refine:
         config = RandomWalkConfig(key=key, iterations=100, tuning_steps=10)
