@@ -38,11 +38,6 @@ def make_snelson_data():
     X = data[:, [0]]  # (N, 1)
     y = data[:, 1]  # (N,)
 
-    X_mean, X_std = X.mean(0), X.std(0)
-    y_mean, y_std = y.mean(), y.std()
-    X = (X - X_mean) / X_std
-    y = (y - y_mean) / y_std
-
     return X, y
 
 
@@ -157,7 +152,7 @@ def main(
         method=method,
         extra_state=extra_state,
         rwmc_refine=rwmc,
-        min_eigenvalue=3,
+        min_eigenvalue=1e-6,
     )
 
     match dataset:

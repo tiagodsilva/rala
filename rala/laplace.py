@@ -183,7 +183,7 @@ def alogmap(
 def find_map(
     neg_log_p_flat: Callable,
     theta_init: jax.Array,
-    max_iterations: int = 30_000,
+    max_iterations: int = 15_000,
     tol: float = 1e-5,
 ) -> jax.Array:
     # The purpose of this function may sound mystical;

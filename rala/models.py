@@ -31,10 +31,6 @@ class DataNorm:
     def norm(self, x: jax.Array):
         return (x - self.X_mu) / self.X_std
 
-    @partial(jax.vmap, in_axes=(None, 0), out_axes=0)
-    def denorm(self, x: jax.Array):
-        return x * self.y_std + self.y_mu
-
 
 def forward_modules(x: jax.Array, layer: nnx.Module):
     y = nnx.tanh(x)
@@ -98,8 +94,8 @@ class MLP(nnx.Module, Generic[ExtraParamsType]):
         )
 
     def __call__(self, x: jax.Array):
-        # x_norm = self.data_norm.norm(x)
-        y = self.linear_in(x)
+        x_norm = self.data_norm.norm(x)
+        y = self.linear_in(x_norm)
         y, _ = jax.lax.scan(
             f=forward_modules,
             init=y,
@@ -107,7 +103,6 @@ class MLP(nnx.Module, Generic[ExtraParamsType]):
             length=self.nlayers,
         )
         y = self.linear_out(y)
-        # y = self.data_norm.denorm(y)
         return y
 
     def set_scale(self, X: jax.Array, y: jax.Array):
@@ -119,9 +114,7 @@ class MLP(nnx.Module, Generic[ExtraParamsType]):
         )
 
 
-class MLPLastLayer(nnx.Module, Generic[ExtraParamsType]):
-    extra_params: Optional[ExtraParamsType] = None
-
+class MLPLastLayer(MLP):
     def __init__(
         self,
         din: int,
@@ -184,16 +177,7 @@ class MLPLastLayer(nnx.Module, Generic[ExtraParamsType]):
             length=self.nlayers,
         )
         y = self.linear_out(y)
-        y = self.data_norm.denorm(y)
         return y
-
-    def set_scale(self, X: jax.Array, y: jax.Array):
-        self.data_norm.value = self.data_norm.value.replace(
-            X_mu=X.mean(0),
-            X_std=X.std(0),
-            y_mu=y.mean(0),
-            y_std=y.std(0),
-        )
 
 
 # General model for a log posterior distribution.
