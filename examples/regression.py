@@ -231,9 +231,9 @@ def main(
                 model_from_sample = nnx.merge(graphdef, sample, extra_state)
                 plot_model_1d(model_from_sample, x_obs, alpha=0.2, c="teal")
             plt.scatter(x_obs, y)
+            plt.savefig(f"figures/{dataset.value}.png")
             show_kitty()
 
-    plt.savefig(f"figures/{dataset.value}.png")
     # # Compute accuracy from the predictive marginal
     # jax.debug.print("{}", acc_from_pm(pm(samples, graphdef, X_test), y_test))
 
