@@ -164,6 +164,7 @@ def main(
     method: LaplaceMethod = LaplaceMethod.STANDARD,
     last_layer: bool = False,
     rwmc: bool = False,
+    hmc: bool = False,
     find_map: bool = False,
     use_ggn: bool = False,
     min_eig: float = 1e-6,
@@ -205,7 +206,10 @@ def main(
     extra_state = nnx.state(model, nnx.Any(ExtraParamsWrapper, Buffer))
 
     options = LaplaceOptions(
-        rwmc_refine=rwmc, find_map=find_map, min_hessian_eigenvalue=min_eig
+        rwmc_refine=rwmc,
+        hmc_refine=hmc,
+        find_map=find_map,
+        min_hessian_eigenvalue=min_eig,
     )
     samples, graphdef, _ = laplace_approximation(
         partial(log_p, X=X, y=y),
