@@ -231,7 +231,9 @@ def main(
                 model_from_sample = nnx.merge(graphdef, sample, extra_state)
                 plot_model_1d(model_from_sample, x_obs, alpha=0.2, c="teal")
             plt.scatter(x_obs, y)
-            plt.savefig(f"figures/{dataset.value}.png")
+            filepath = pathlib.Path(f"figures/{dataset.value}.png")
+            filepath.parent.mkdir(exist_ok=True)
+            plt.savefig(filepath)
 
             show_kitty()
 
