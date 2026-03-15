@@ -9,7 +9,12 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import typer
 
-from rala.laplace import LaplaceMethod, laplace_approximation
+from rala.laplace import (
+    LaplaceMethod,
+    LaplaceOptions,
+    laplace_approximation,
+    ravel_model,
+)
 from rala.models import MLP, Buffer, ExtraParamsWrapper, MLPLastLayer
 from rala.train import train
 from rala.utils import show_kitty
@@ -77,7 +82,6 @@ def log_prior_fn(
     return log_prior
 
 
-@nnx.jit
 def log_p(model: nnx.Module, X: jax.Array, y: jax.Array):
     # We compute the likelihood for data point
     y_pred = model(X)
@@ -87,13 +91,66 @@ def log_p(model: nnx.Module, X: jax.Array, y: jax.Array):
     return (log_lik + log_prior).sum()
 
 
-def plot_model_1d(model: MLP[ExtraParams], x_obs: jax.Array):
+def plot_model_1d(
+    model: MLP[ExtraParams],
+    x_obs: jax.Array,
+    alpha: float = 1,
+    c: str = None,
+):
     # Create a grid to plot
     x_grid = jnp.linspace(x_obs.min(), x_obs.max(), num=200)
     x_grid = jnp.expand_dims(x_grid, axis=1)
     y_pred = model(x_grid)
 
-    plt.plot(x_grid, y_pred, label="model")
+    plt.plot(x_grid, y_pred, label="model", c=c, alpha=alpha)
+
+
+def ggn(
+    model: nnx.Module,
+    extra_state: nnx.State,
+    X: jax.Array,
+    y: jax.Array,
+):
+    # Compute the Hessian of the loss wrt model outputs
+    hessian_fn = jax.hessian(partial(log_lik_fn, model=model), argnums=0)
+
+    # Compute the Jacobian of the model wrt parameters
+    graphdef, theta_map, unravel = ravel_model(model)
+
+    def model_fn(theta: jax.Array, x: jax.Array, extra_state: nnx.State):
+        state_unflat = unravel(theta)
+        model_reconstructed = nnx.merge(graphdef, state_unflat, extra_state)
+        return model_reconstructed(x)
+
+    jacobian_fn = jax.jacobian(
+        partial(model_fn, extra_state=extra_state), argnums=0
+    )
+
+    @partial(jax.vmap, in_axes=(None, 0, 0, 0), out_axes=0)
+    def ggn_single(
+        theta_map: nnx.Module,
+        x: jax.Array,
+        y_pred: jax.Array,
+        y_true: jax.Array,
+    ):
+        H_i = -hessian_fn(y_pred[None, ...], y_true).squeeze(axis=(0, 2))
+        J_i = jacobian_fn(theta_map, x[None, ...]).squeeze(axis=0)
+        return J_i.T @ H_i @ J_i
+
+    # Compute the prior's Hessian
+    def log_prior_from_theta(theta: jax.Array, extra_state: nnx.State):
+        state_unflat = unravel(theta)
+        model_reconstructed = nnx.merge(graphdef, state_unflat, extra_state)
+        return log_prior_fn(model_reconstructed)
+
+    log_prior_hessian = jax.hessian(
+        partial(log_prior_from_theta, extra_state=extra_state)
+    )(theta_map)
+
+    # Evaluate the functions
+    G = ggn_single(theta_map, X, model(X), y).sum(axis=0) - log_prior_hessian
+
+    return G
 
 
 @app.command()
@@ -107,6 +164,9 @@ def main(
     method: LaplaceMethod = LaplaceMethod.STANDARD,
     last_layer: bool = False,
     rwmc: bool = False,
+    find_map: bool = False,
+    use_ggn: bool = False,
+    min_eig: float = 1e-6,
 ):
 
     match dataset:
@@ -144,6 +204,9 @@ def main(
 
     extra_state = nnx.state(model, nnx.Any(ExtraParamsWrapper, Buffer))
 
+    options = LaplaceOptions(
+        rwmc_refine=rwmc, find_map=find_map, min_hessian_eigenvalue=min_eig
+    )
     samples, graphdef, _ = laplace_approximation(
         partial(log_p, X=X, y=y),
         model,
@@ -151,17 +214,18 @@ def main(
         num_samples=num_samples,
         method=method,
         extra_state=extra_state,
-        rwmc_refine=rwmc,
-        min_eigenvalue=1e-6,
+        options=options,
+        hessian_fn=partial(ggn, X=X, y=y) if use_ggn else None,
     )
 
     match dataset:
         case DataEnum.SNELSON:
             x_obs = X.squeeze(axis=1)
+            plot_model_1d(model, x_obs, alpha=1, c="orange")
             for i in range(num_samples):
                 sample = jax.tree_util.tree_map(lambda x: x[i], samples)
                 model_from_sample = nnx.merge(graphdef, sample, extra_state)
-                plot_model_1d(model_from_sample, x_obs)
+                plot_model_1d(model_from_sample, x_obs, alpha=0.2, c="teal")
             plt.scatter(x_obs, y)
             show_kitty()
 

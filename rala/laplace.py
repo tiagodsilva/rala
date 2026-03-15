@@ -23,7 +23,18 @@ class LaplaceMethod(Enum):
     OPT = "opt"  # Optimization-based Laplace approximation.
 
 
-def spectral_decomp(m: jax.Array, min: float = 1e-6, max: float = 1e8):
+@struct.dataclass
+class LaplaceOptions:
+    rwmc_refine: bool = False
+    hmc_refine: bool = False
+
+    min_hessian_eigenvalue: float = 1e-6
+    max_hessian_eigenvalue: float = 1e8
+
+    find_map: bool = False
+
+
+def stable_spectral_inverse(m: jax.Array, min: float = 1e-6, max: float = 1e8):
     # Ensure the eigenvalues of the matrix m are in between `min` and `max`
     out = jnp.linalg.eigh(m)
 
@@ -43,6 +54,19 @@ def sample_from_gaussian(
     flat_mean = mean.ravel()
     delta = cov_L @ z
     return (flat_mean + delta).reshape(mean.shape)
+
+
+def get_hmc_config(key: jax.Array, samples: jax.Array):
+    return HMCConfig(
+        initial_step_size=0.01,
+        max_path_len=1,
+        iterations=50,
+        initial_precm=jnp.cov(samples, rowvar=False),
+        key=key,
+        fast_tuning_steps=0,
+        slow_tuning_phases=0,
+        slow_tuning_initial_length=0,
+    )
 
 
 @partial(jax.jit, static_argnames=("logp_fn_flat", "dim"))
@@ -193,22 +217,36 @@ def find_map(
     return theta
 
 
+def ravel_model(model: nnx.Module):
+    param_state = nnx.state(model, nnx.Param)
+
+    graphdef = nnx.graphdef(model)
+    theta_map, unravel = ravel_pytree(param_state)
+    return graphdef, theta_map, unravel
+
+
+def get_hessian(graphdef, theta_map, unravel, extra_state, logp_fn):
+    def loss_fn(theta):
+        state_unflat = unravel(theta)
+        model_reconstructed = nnx.merge(graphdef, state_unflat, extra_state)
+        return -logp_fn(model_reconstructed)
+
+    return jax.hessian(loss_fn)(theta_map)
+
+
 def laplace_approximation(
     logp_fn: Callable[[nnx.Module], float],
     model: nnx.Module,
     key: jax.Array,
     num_samples: int,
     method: LaplaceMethod = LaplaceMethod.STANDARD,
+    hessian_fn: callable = None,
     metric_fn: callable = None,
-    rwmc_refine: bool = False,
-    hmc_refine: bool = False,
+    options: LaplaceOptions = LaplaceOptions(),
     extra_state: nnx.State = nnx.State({}),
-    min_eigenvalue: float = 1e-6,
 ) -> tuple[nnx.State, nnx.GraphDef, jax.Array]:
-    param_state = nnx.state(model, nnx.Param)
-
-    graphdef = nnx.graphdef(model)
-    theta_map, unravel = ravel_pytree(param_state)
+    graphdef, theta_map, unravel = ravel_model(model)
+    (dim,) = theta_map.shape
 
     @jax.jit
     def log_p_flat(theta, extra_state: struct.PyTreeNode):
@@ -220,21 +258,30 @@ def laplace_approximation(
     def neg_log_p_flat(theta, extra_state: struct.PyTreeNode):
         return -log_p_flat(theta, extra_state)
 
-    theta_map = find_map(
-        partial(neg_log_p_flat, extra_state=extra_state),
-        theta_map,  # pre-trained weights as warm start
-    )
+    if hessian_fn is None:
+        hessian = get_hessian(
+            graphdef, theta_map, unravel, extra_state, logp_fn
+        )
+    else:
+        hessian = hessian_fn(model, extra_state=extra_state)
 
-    (dim,) = theta_map.shape
-    hessian = jax.hessian(partial(neg_log_p_flat, extra_state=extra_state))(
-        theta_map
+    if options.find_map:
+        # This should further stabilize the gradients and the Hessian inversion
+        theta_map = find_map(
+            partial(neg_log_p_flat, extra_state=extra_state),
+            theta_map,  # pre-trained weights as warm start
+        )
+
+    cov_sqrtm = stable_spectral_inverse(
+        hessian,
+        min=options.min_hessian_eigenvalue,
+        max=options.max_hessian_eigenvalue,
     )
-    hessian_L = spectral_decomp(hessian, min=min_eigenvalue)
 
     key, *keys = jax.random.split(key, num_samples + 1)
     keys = jnp.array(keys)
 
-    samples = sample_from_gaussian(keys, theta_map, hessian_L)
+    samples = sample_from_gaussian(keys, theta_map, cov_sqrtm)
 
     match method:
         case LaplaceMethod.RIEMANN:
@@ -260,24 +307,15 @@ def laplace_approximation(
             )
             samples = fexpmap(samples, theta_map, metric_fn, dim)
 
-    if rwmc_refine:
+    if options.rwmc_refine:
         config = RandomWalkConfig(key=key, iterations=100, tuning_steps=10)
         samples = random_walk(
             partial(neg_log_p_flat, extra_state=extra_state), samples, config
         )
         samples = samples[-1]
 
-    if hmc_refine:
-        config = HMCConfig(
-            initial_step_size=0.01,
-            max_path_len=1,
-            iterations=50,
-            initial_precm=jnp.cov(samples, rowvar=False),
-            key=key,
-            fast_tuning_steps=0,
-            slow_tuning_phases=0,
-            slow_tuning_initial_length=0,
-        )
+    if options.hmc_refine:
+        config = get_hmc_config(key, samples)
         _, samples = hmc(
             partial(neg_log_p_flat, extra_state=extra_state), samples, config
         )

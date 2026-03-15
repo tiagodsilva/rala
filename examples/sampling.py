@@ -7,7 +7,7 @@ import jax.scipy.optimize as jspo
 import matplotlib.pyplot as plt
 import typer
 
-from rala.laplace import LaplaceMethod, laplace_approximation
+from rala.laplace import LaplaceMethod, LaplaceOptions, laplace_approximation
 from rala.models import LogPosterior
 from rala.utils import plot_potential, show_kitty
 
@@ -18,7 +18,9 @@ def banana_log_density(x, b: float = 6):
     return -log_p
 
 
-def squiggle_log_density(x, a: float = 1.5, cov: jax.Array = jnp.array([[5, 0], [0, 0.05]])):
+def squiggle_log_density(
+    x, a: float = 1.5, cov: jax.Array = jnp.array([[5, 0], [0, 0.05]])
+):
     y = jnp.array([x[0], x[1] + jnp.sin(a * x[0])])
     y_inv = jnp.linalg.solve(cov, y)
     return -jnp.dot(y, y_inv) / 2
@@ -41,14 +43,21 @@ def to_hausdorff(logp_fn: callable):
     return logp_hausdorff
 
 
-def plot_samples(samples: jax.Array, x_map: jax.Array, logp_fn: callable, filename: str = None):
+def plot_samples(
+    samples: jax.Array,
+    x_map: jax.Array,
+    logp_fn: callable,
+    filename: str = None,
+):
     # Plot the samples
     samples = samples[~jnp.isnan(samples).any(axis=1)]
     xmin, xmax = samples[:, 0].min(), samples[:, 0].max()
     ymin, ymax = samples[:, 1].min(), samples[:, 1].max()
 
     ax = plt.subplot(1, 2, 1)
-    plot_potential(xmin, xmax, ymin, ymax, res=2000, logp_fn=logp_fn, ax=ax, alpha=0.4)
+    plot_potential(
+        xmin, xmax, ymin, ymax, res=2000, logp_fn=logp_fn, ax=ax, alpha=0.4
+    )
     ax.scatter(samples[:, 0], samples[:, 1])
     ax = plt.subplot(1, 2, 2)
     plot_potential(xmin, xmax, ymin, ymax, res=2000, logp_fn=logp_fn, ax=ax)
@@ -101,6 +110,7 @@ def main(
     # Instantiate the distribution
     model = LogPosterior(x_map)
 
+    options = LaplaceOptions(rwmc_refine=rwmc, hmc_refine=hmc)
     # Compute the Laplace Approximation
     key = jax.random.key(seed)
     samples, _, key = laplace_approximation(
@@ -111,8 +121,7 @@ def main(
         key=key,
         num_samples=num_samples,
         method=method,
-        rwmc_refine=rwmc,
-        hmc_refine=hmc,
+        options=options,
     )
     samples = samples["theta"].get_value()
 
