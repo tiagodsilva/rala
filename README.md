@@ -17,7 +17,7 @@ python examples/sampling.py banana --method monge --hmc
 ![Banana distribution](./figures/banana.png)
 
 ```
-python examples/regression.py --epochs 15000 --last-layer --seed 84 --batch-size 64
+python examples/regression.py --epochs 15000 --last-layer --seed 84 --batch-size 64 --min-eig 80
 ```
 
 ![Snelson distribution](./figures/snelson.png)

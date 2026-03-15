@@ -232,6 +232,7 @@ def main(
                 plot_model_1d(model_from_sample, x_obs, alpha=0.2, c="teal")
             plt.scatter(x_obs, y)
             plt.savefig(f"figures/{dataset.value}.png")
+
             show_kitty()
 
     # # Compute accuracy from the predictive marginal
