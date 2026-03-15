@@ -12,6 +12,8 @@ from diffrax import Dopri5, ODETerm, PIDController, diffeqsolve
 from jax.flatten_util import ravel_pytree
 from jaxhmc.mcmc import HMCConfig, RandomWalkConfig, hmc, random_walk
 
+# python examples/regression.py --epochs 15000 --seed 42 --batch-size 64 --num-samples 64 --min-eig 80
+
 
 class LaplaceMethod(Enum):
     STANDARD = "standard"

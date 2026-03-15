@@ -233,6 +233,7 @@ def main(
             plt.scatter(x_obs, y)
             show_kitty()
 
+    plt.savefig(f"figures/{dataset.value}.png")
     # # Compute accuracy from the predictive marginal
     # jax.debug.print("{}", acc_from_pm(pm(samples, graphdef, X_test), y_test))
 
