@@ -20,7 +20,7 @@ python examples/sampling.py banana --method monge --hmc
 python examples/regression.py --epochs 15000 --last-layer --seed 84 --batch-size 64
 ```
 
-![Sneilson distribution](./figures/sneilson.png)
+![Snelson distribution](./figures/snelson.png)
 
 ## Methods
 
